@@ -31,6 +31,12 @@ defmodule Campfire.Chat.Room do
       prepare build(sort: [sort_name: :asc, id: :asc])
     end
 
+    read :oldest_for_user do
+      description "The actor's oldest room (all kinds): where `/` lands without a valid last room."
+      get? true
+      prepare build(sort: [inserted_at: :asc, id: :asc], limit: 1)
+    end
+
     create :create_open do
       accept [:name]
       change set_attribute(:kind, :open)

@@ -93,6 +93,7 @@ Request flow: `Accounts.get_session_by_token!(token)` → `session.user`, then `
 | Function | Actor | Returns / notes |
 |---|---|---|
 | `list_rooms()` | any user | The actor's rooms (all kinds), ordered by name. Includes rooms the actor made invisible |
+| `oldest_room()` | any user | `{:ok, room}` with the actor's oldest room (by `inserted_at`, then id; all kinds), or `{:ok, nil}` when they have none. Where `/` lands when there is no valid last room |
 | `get_room(id)` | member | `{:ok, room}`, or NotFound for non-members |
 | `create_open_room(name)` | active person; admin only when the account restricts room creation | `{:ok, room}`. Every active user (bots included) becomes a member with involvement `:mentions` |
 | `create_closed_room(name, user_ids)` | same as above | `{:ok, room}`. Only `user_ids` become members. **The creator isn't added automatically** (the form pre-checks them) |
