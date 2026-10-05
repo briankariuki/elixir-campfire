@@ -1,18 +1,52 @@
-# Campfire
+# Campfire (Elixir)
 
-To start your Phoenix server:
+A port of Basecamp's [Campfire](https://github.com/basecamp/once-campfire) group chat to Elixir:
+**Phoenix + LiveView** for the web, **Ash Framework** (with AshPostgres) for the domain.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+- `docs/PORTING.md`: the design and port plan (what was kept, simplified or dropped)
+- `docs/DOMAIN_API.md`: the domain functions the web layer calls
+- `docs/analysis/`: notes on how the original Rails app works
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+## Running it
 
-Ready to run in production? Please [check our deployment guides](https://phoenix.hexdocs.pm/deployment.html).
+Requirements: Elixir 1.18+, Erlang/OTP 27+, Postgres (dev config: `postgres`/`postgres` on localhost).
 
-## Learn more
+```sh
+mix setup          # deps, database, assets
+mix phx.server     # http://localhost:4000
+```
 
-* Official website: https://www.phoenixframework.org/
-* Guides: https://phoenix.hexdocs.pm/overview.html
-* Docs: https://phoenix.hexdocs.pm
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+The first visit goes to the setup page, which creates the account, the first administrator and the "All Talk" room.
+Invite others with the join link on the account page (`/account`).
+
+Uploaded files are stored on disk in `priv/uploads` (set `UPLOADS_DIR` in production).
+
+## Bots
+
+Admins create bots at `/account/bots`. Each bot gets a key, and the page shows the per-room URLs.
+
+```sh
+curl -d 'Hello!' http://localhost:4000/rooms/1/<bot_key>/messages                  # post text
+curl -F "attachment=@/path/to/file" http://localhost:4000/rooms/1/<bot_key>/messages # post a file
+curl http://localhost:4000/rooms/1/<bot_key>/messages                              # read (JSON)
+```
+
+When a bot has a webhook URL, it receives a JSON `POST` each time it is @mentioned, and for every message in a DM with
+the bot. A `text/plain` or `text/html` response is posted back as the bot's reply. See `docs/PORTING.md` §5.
+
+## Layout
+
+```
+lib/campfire/            Ash domains: Accounts (account, users, sessions, bans, webhooks)
+                         and Chat (rooms, memberships, messages, boosts, searches)
+lib/campfire_web/        Phoenix: controllers (auth, bot API, files), LiveViews (rooms, settings),
+                         components and UserAuth
+assets/css/campfire/     the original Campfire stylesheets (MIT)
+assets/js/hooks/         the small LiveView hooks (scrolling, composer, local time, presence, …)
+```
+
+## Tests
+
+```sh
+mix test
+```
