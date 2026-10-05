@@ -20,6 +20,15 @@ defmodule CampfireWeb.Router do
     get "/", PageController, :home
   end
 
+  # Development-only routes
+  if Application.compile_env(:campfire, :dev_routes) do
+    scope "/dev", CampfireWeb.Dev do
+      pipe_through :browser
+
+      live "/styleguide", StyleguideLive
+    end
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", CampfireWeb do
   #   pipe_through :api

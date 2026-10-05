@@ -27,7 +27,7 @@ config :campfire, CampfireWeb.Endpoint,
   secret_key_base: "KqUtI6xfGnWOVkub/RRW7xv5VVksJZV0WUgA9itgAtFqGEvE7Oah+J8Pc4oT45Rv",
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:campfire, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:campfire, ~w(--watch)]}
+    esbuild_css: {Esbuild, :install_and_run, [:campfire_css, ~w(--sourcemap=inline --watch)]}
   ]
 
 # ## SSL Support

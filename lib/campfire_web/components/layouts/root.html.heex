@@ -2,43 +2,40 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="Campfire" suffix=" · Phoenix Framework" phx-no-format>{assigns[:page_title]}</.live_title>
+    <.live_title default="Campfire" phx-no-format>{assigns[:page_title]}</.live_title>
+    <link rel="icon" type="image/png" href={~p"/images/campfire-icon.png"} />
+    <link rel="apple-touch-icon" href={~p"/images/campfire-icon.png"} />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
-    <script>
-      (() => {
-        const systemTheme = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-
-        const setTheme = (theme) => {
-          if (theme === "system") {
-            localStorage.removeItem("phx:theme");
-            document.documentElement.setAttribute("data-theme", systemTheme());
-            document.documentElement.setAttribute("data-theme-source", "system");
-          } else {
-            localStorage.setItem("phx:theme", theme);
-            document.documentElement.setAttribute("data-theme", theme);
-            document.documentElement.setAttribute("data-theme-source", "user");
-          }
-        };
-        if (!document.documentElement.hasAttribute("data-theme")) {
-          setTheme(localStorage.getItem("phx:theme") || "system");
-        }
-        window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-        
-        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
-
-        matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
-          if (document.documentElement.getAttribute("data-theme-source") === "system") {
-            document.documentElement.setAttribute("data-theme", systemTheme());
-          }
-        });
-      })();
-    </script>
   </head>
-  <body>
+  <body class={assigns[:body_class]}>
+    <a href="#main-content" class="skip-navigation btn">Skip to main content</a>
+
     {@inner_content}
+
+    <dialog class="lightbox" aria-label="Image Viewer (Press escape to close)">
+      <img class="lightbox__image" alt="" />
+
+      <form method="dialog" class="lightbox__btn">
+        <button class="btn">
+          <img src={~p"/images/remove.svg"} aria-hidden="true" />
+          <span class="for-screen-reader">Close image viewer</span>
+        </button>
+      </form>
+
+      <a href="" class="lightbox__btn--download btn" download>
+        <img src={~p"/images/download.svg"} aria-hidden="true" />
+        <span class="for-screen-reader">Download file</span>
+      </a>
+    </dialog>
   </body>
 </html>
