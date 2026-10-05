@@ -39,6 +39,11 @@ topbar.config({barColors: {0: "#ed3f1c"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
+// The root layout (and so <body class>) is only rendered on the first request, so live
+// navigation keeps the previous page's body class. CampfireWeb.BodyClass pushes the current
+// one on every navigation.
+window.addEventListener("phx:body-class", ({detail}) => document.body.className = detail.class)
+
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 

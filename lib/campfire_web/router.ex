@@ -58,7 +58,8 @@ defmodule CampfireWeb.Router do
   end
 
   ## Signed-in LiveViews
-  live_session :authenticated, on_mount: [{CampfireWeb.UserAuth, :ensure_authenticated}] do
+  live_session :authenticated,
+    on_mount: [{CampfireWeb.UserAuth, :ensure_authenticated}, CampfireWeb.BodyClass] do
     scope "/", CampfireWeb do
       pipe_through [:browser, :require_authenticated_user]
 
@@ -80,7 +81,8 @@ defmodule CampfireWeb.Router do
   end
 
   ## Admin LiveViews (B1)
-  live_session :admin, on_mount: [{CampfireWeb.UserAuth, :ensure_admin}] do
+  live_session :admin,
+    on_mount: [{CampfireWeb.UserAuth, :ensure_admin}, CampfireWeb.BodyClass] do
     scope "/account", CampfireWeb do
       pipe_through [:browser, :require_authenticated_user]
 
