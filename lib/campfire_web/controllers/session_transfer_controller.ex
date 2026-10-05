@@ -17,8 +17,8 @@ defmodule CampfireWeb.SessionTransferController do
 
   def update(conn, %{"token" => token}) do
     with {:ok, user_id} <- Transfer.verify(token),
-         {:ok, %User{status: :active, role: role} = user} when role != :bot <-
-           Ash.get(User, user_id, authorize?: false) do
+         {:ok, %User{role: role} = user} when role != :bot <-
+           Campfire.Accounts.get_active_user(user_id) do
       UserAuth.log_in_user(conn, user)
     else
       _ ->

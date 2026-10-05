@@ -31,9 +31,9 @@ Read `docs/PORTING.md` for the product rules; this file only describes the funct
 | Function | Actor | Returns / notes |
 |---|---|---|
 | `get_account()` | no actor | `{:ok, %Account{} \| nil}` (`get_account!()` returns the account or nil) |
-| `set_up?()` | no actor | `true` once first run has happened |
-| `valid_join_code?(code)` | no actor | boolean (constant-time compare) |
-| `first_run(%{name, email_address, password, avatar_key?})` | no actor | `{:ok, %{account:, user:, room:}}`: creates the account, an **administrator**, and the open room "All Talk" (with the admin as a member). Returns `{:error, :already_set_up}` if an account exists. `first_run!/1` raises instead |
+| `set_up?()` | no actor | `true` once first run has happened (predicate interface: bare boolean; `set_up()` gives `{:ok, boolean}`) |
+| `valid_join_code?(code)` | no actor | boolean (constant-time compare; `nil` is false) |
+| `first_run(%{name, email_address, password, avatar_key?})` | no actor | `{:ok, %{account:, user:, room:}}`: one transaction that creates the account, an **administrator**, and the open room "All Talk" (with the admin as a member). If an account exists: `{:error, %Ash.Error.Invalid{errors: [%Campfire.Accounts.Errors.AlreadySetUp{}]}}`. `first_run!/1` raises instead |
 | `update_account(account, %{name?, logo_key?, restrict_room_creation_to_administrators?})` | admin | `{:ok, account}`. A replaced `logo_key` file is deleted |
 | `reset_join_code(account)` | admin | `{:ok, account}` with a new `join_code` (`XXXX-XXXX-XXXX`) |
 
@@ -46,7 +46,11 @@ Read `docs/PORTING.md` for the product rules; this file only describes the funct
 | `register_user(%{name, email_address, password, bio?, avatar_key?})` | no actor | `{:ok, user}` (role `:member`). Joins every open room. The email is trimmed and lowercased; a duplicate email gives `{:error, %Ash.Error.Invalid{}}`. **The caller checks the join code** with `valid_join_code?/1` |
 | `sign_in(email, password)` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. Active non-bot users only (bcrypt; timing-safe when the user doesn't exist) |
 | `authenticate_bot(bot_key)` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. The key is `"<id>-<token>"`. Active bots only; `Plug.Crypto.secure_compare`; an empty token is rejected |
-| `get_user(id)` | any user | `{:ok, user}`. For the public avatar route use `Ash.get(Campfire.Accounts.User, id, authorize?: false)` |
+| `get_user(id)` | any user | `{:ok, user}` |
+| `get_user_for_avatar(id)` | no actor | `{:ok, %User{} \| nil}` with only `id, name, role, avatar_key, updated_at` selected. For the public avatar route (an invalid id gives `{:error, _}`) |
+| `get_active_user(id)` | no actor | `{:ok, %User{} \| nil}`, `nil` unless `status == :active`. For session-transfer links (the caller still rejects bots) |
+| `first_administrator()` | no actor | `{:ok, %User{} \| nil}`: the oldest administrator, shown as the help contact on the sign-in pages |
+| `list_users_by_ids(ids)` | any user | `[%User{}]` for those ids (`list_users_by_ids!/2`). Without an actor it returns `[]`; message rendering, which has no actor, passes `authorize?: false` |
 | `list_users(%{include_banned: false, include_bots: false})` | any user | Active people ordered by name. The params map is optional. Admins' account page: `%{include_banned: true}` |
 | `list_bots()` | admin | Active bots ordered by name, with `:webhook` loaded (`bot.webhook && bot.webhook.url`) |
 | `update_profile(user, %{name?, email_address?, bio?, avatar_key?, password?})` | the user themself | `{:ok, user}`. A blank or missing password keeps the old one. A replaced avatar file is deleted |
@@ -72,15 +76,15 @@ Helpers on `Campfire.Accounts.User`: `initials(user)` ("JF"), `bot_key(user)` (`
 | Function | Actor | Returns / notes |
 |---|---|---|
 | `create_session(%{ip_address, user_agent})` | **the user signing in** (`actor: user`) | `{:ok, %Session{token: ...}}`. Put `session.token` in the Plug session as `:session_token` |
-| `get_session_by_token(token)` | no actor | `%Session{user: %User{}}` or `nil`. Only returns sessions whose user is **active** |
-| `touch_session(session, %{ip_address, user_agent})` | no actor | `{:ok, session}`. Writes only if `last_active_at` is more than 1h old |
+| `get_session_by_token!(token)` | no actor | `%Session{user: %User{}}` or `nil` (`get_session_by_token/1` wraps it in `{:ok, _}`). Only returns sessions whose user is **active**. Authorization is off by default (the token is the credential) |
+| `touch_session(session, %{ip_address, user_agent})` | the session's user | `{:ok, session}`. The action itself writes only if `last_active_at` is more than 1h old; a fresh session is returned unchanged |
 | `destroy_session(session)` | the session's user | `:ok`. Logout; disconnects that user's sockets |
-| `banned_ip?(ip_string)` | no actor | boolean, for the `block_banned_ip` plug |
+| `banned_ip?(ip_string)` | no actor | boolean, for the `block_banned_ip` plug (predicate interface; `banned_ip(ip)` gives `{:ok, boolean}`) |
 
 Login flow: `{:ok, %User{} = user} = Accounts.sign_in(email, pw)` →
 `{:ok, session} = Accounts.create_session(%{ip_address: ip, user_agent: ua}, actor: user)` →
 `put_session(conn, :session_token, session.token)` + `put_session(conn, :live_socket_id, "users_socket:#{user.id}")`.
-Request flow: `Accounts.get_session_by_token(token)` → `session.user`, then `Accounts.touch_session(session, ...)`.
+Request flow: `Accounts.get_session_by_token!(token)` → `session.user`, then `Accounts.touch_session(session, ..., actor: session.user)`.
 
 ## `Campfire.Chat`
 

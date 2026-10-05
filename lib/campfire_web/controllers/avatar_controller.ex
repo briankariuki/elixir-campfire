@@ -15,8 +15,8 @@ defmodule CampfireWeb.AvatarController do
   @cache_control "public, max-age=1800, stale-while-revalidate=604800"
 
   def show(conn, %{"id" => id}) do
-    case Ash.get(User, id, authorize?: false) do
-      {:ok, user} -> send_avatar(conn, user)
+    case Campfire.Accounts.get_user_for_avatar(id) do
+      {:ok, %User{} = user} -> send_avatar(conn, user)
       _ -> send_resp(conn, :not_found, "Not found")
     end
   end

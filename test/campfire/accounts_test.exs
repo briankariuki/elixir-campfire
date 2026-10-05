@@ -5,6 +5,7 @@ defmodule Campfire.AccountsTest do
 
   alias Campfire.{Accounts, Broadcast, Chat}
   alias Campfire.Accounts.{Session, User}
+  alias Campfire.Accounts.Errors.AlreadySetUp
 
   describe "first run" do
     test "creates the account, an administrator and the open room All Talk" do
@@ -29,8 +30,49 @@ defmodule Campfire.AccountsTest do
     test "only runs once" do
       Accounts.first_run!(%{name: "A", email_address: "a@example.com", password: "pw"})
 
-      assert {:error, :already_set_up} =
+      assert {:error, %Ash.Error.Invalid{errors: [%AlreadySetUp{}]}} =
                Accounts.first_run(%{name: "B", email_address: "b@example.com", password: "pw"})
+    end
+  end
+
+  describe "read interfaces for the web layer" do
+    test "list_users_by_ids returns nothing without an actor" do
+      user = user_fixture()
+      other = user_fixture()
+
+      assert {:ok, []} = Accounts.list_users_by_ids([user.id])
+
+      assert [%{id: id}] = Accounts.list_users_by_ids!([other.id], actor: user)
+      assert id == other.id
+      assert [] = Accounts.list_users_by_ids!([], actor: user)
+    end
+
+    test "get_user_for_avatar is public and selects only the avatar fields" do
+      user = user_fixture(name: "Jason Fried")
+
+      assert {:ok, %User{id: id, name: "Jason Fried", role: :member} = found} =
+               Accounts.get_user_for_avatar(user.id)
+
+      assert id == user.id
+      assert %Ash.NotLoaded{} = found.email_address
+      assert {:ok, nil} = Accounts.get_user_for_avatar(0)
+      assert {:error, _} = Accounts.get_user_for_avatar("abc")
+    end
+
+    test "get_active_user skips deactivated users" do
+      user = user_fixture()
+      assert {:ok, %User{}} = Accounts.get_active_user(user.id)
+      Accounts.deactivate_user!(user, actor: admin_fixture())
+      assert {:ok, nil} = Accounts.get_active_user(user.id)
+    end
+
+    test "first_administrator is the oldest administrator" do
+      assert {:ok, nil} = Accounts.first_administrator()
+      first = admin_fixture()
+      admin_fixture()
+      user_fixture()
+      assert {:ok, %User{id: id}} = Accounts.first_administrator()
+      assert id == first.id
     end
   end
 
@@ -42,6 +84,7 @@ defmodule Campfire.AccountsTest do
 
       assert Accounts.valid_join_code?(account.join_code)
       refute Accounts.valid_join_code?("nope")
+      refute Accounts.valid_join_code?(nil)
 
       assert {:error, %Ash.Error.Forbidden{}} = Accounts.reset_join_code(account, actor: member)
       assert {:ok, reset} = Accounts.reset_join_code(account, actor: admin)
@@ -205,15 +248,16 @@ defmodule Campfire.AccountsTest do
       assert session.user_id == user.id
       assert byte_size(session.token) >= 32
 
-      assert %Session{id: id, user: %User{}} = Accounts.get_session_by_token(session.token)
+      assert %Session{id: id, user: %User{}} = Accounts.get_session_by_token!(session.token)
       assert id == session.id
-      refute Accounts.get_session_by_token("nope")
+      refute Accounts.get_session_by_token!("nope")
 
       # Fresh sessions aren't written to.
-      assert {:ok, ^session} = Accounts.touch_session(session, %{ip_address: "5.6.7.8"})
+      assert {:ok, ^session} =
+               Accounts.touch_session(session, %{ip_address: "5.6.7.8"}, actor: user)
 
       stale = %{session | last_active_at: DateTime.add(DateTime.utc_now(), -2, :hour)}
-      assert {:ok, touched} = Accounts.touch_session(stale, %{ip_address: "5.6.7.8"})
+      assert {:ok, touched} = Accounts.touch_session(stale, %{ip_address: "5.6.7.8"}, actor: user)
       assert touched.ip_address == "5.6.7.8"
 
       Phoenix.PubSub.subscribe(Campfire.PubSub, Broadcast.socket_id(user.id))
@@ -223,14 +267,14 @@ defmodule Campfire.AccountsTest do
 
       assert :ok = Accounts.destroy_session(session, actor: user)
       assert_receive %Phoenix.Socket.Broadcast{event: "disconnect"}
-      refute Accounts.get_session_by_token(session.token)
+      refute Accounts.get_session_by_token!(session.token)
     end
 
     test "sessions of inactive users are not found" do
       user = user_fixture()
       session = session_fixture(user)
       Accounts.deactivate_user!(user, actor: admin_fixture())
-      refute Accounts.get_session_by_token(session.token)
+      refute Accounts.get_session_by_token!(session.token)
     end
   end
 

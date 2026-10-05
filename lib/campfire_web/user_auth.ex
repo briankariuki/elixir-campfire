@@ -18,8 +18,8 @@ defmodule CampfireWeb.UserAuth do
   @doc "Assigns `:current_user` (or nil) from the session token."
   def fetch_current_user(conn, _opts) do
     with token when is_binary(token) <- get_session(conn, :session_token),
-         %{user: user} = session <- Accounts.get_session_by_token(token) do
-      Accounts.touch_session(session, client_info(conn))
+         %{user: user} = session <- Accounts.get_session_by_token!(token) do
+      Accounts.touch_session(session, client_info(conn), actor: user)
       assign(conn, :current_user, user)
     else
       _ -> assign(conn, :current_user, nil)
@@ -76,7 +76,7 @@ defmodule CampfireWeb.UserAuth do
   @doc "Destroys the current session (disconnecting LiveViews) and redirects to `/`."
   def log_out_user(conn) do
     with token when is_binary(token) <- get_session(conn, :session_token),
-         %{user: user} = session <- Accounts.get_session_by_token(token) do
+         %{user: user} = session <- Accounts.get_session_by_token!(token) do
       Accounts.destroy_session(session, actor: user)
     end
 
@@ -124,7 +124,7 @@ defmodule CampfireWeb.UserAuth do
   defp mount_current_user(socket, session) do
     Phoenix.Component.assign_new(socket, :current_user, fn ->
       with token when is_binary(token) <- session["session_token"],
-           %{user: user} <- Accounts.get_session_by_token(token) do
+           %{user: user} <- Accounts.get_session_by_token!(token) do
         user
       else
         _ -> nil

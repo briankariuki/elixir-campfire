@@ -10,9 +10,6 @@ defmodule CampfireWeb.MessageBody do
   6. wrap everything in `<div class="lexxy-content">`.
   """
 
-  require Ash.Query
-
-  alias Campfire.Accounts.User
   alias Campfire.Chat.Mentions
   alias CampfireWeb.Paths
 
@@ -58,9 +55,10 @@ defmodule CampfireWeb.MessageBody do
       if missing == [] do
         %{}
       else
-        User
-        |> Ash.Query.filter(id in ^missing)
-        |> Ash.read!(authorize?: false)
+        # Rendering has no actor (bot JSON, components); the message is already visible to the
+        # viewer, and mentions only need the users' names.
+        missing
+        |> Campfire.Accounts.list_users_by_ids!(authorize?: false)
         |> Map.new(&{&1.id, &1})
       end
 

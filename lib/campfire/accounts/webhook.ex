@@ -20,7 +20,7 @@ defmodule Campfire.Accounts.Webhook do
   end
 
   actions do
-    defaults [:read]
+    defaults [:read, :destroy]
 
     create :create do
       description "Creates or replaces the bot's webhook (upsert on user_id)."

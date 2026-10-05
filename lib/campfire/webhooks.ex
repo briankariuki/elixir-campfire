@@ -14,7 +14,7 @@ defmodule Campfire.Webhooks do
   require Logger
 
   alias Campfire.Accounts.User
-  alias Campfire.Chat.{Message, Room}
+  alias Campfire.Chat.Message
   alias Campfire.{Async, Uploads}
 
   @timeout 7_000
@@ -22,8 +22,11 @@ defmodule Campfire.Webhooks do
 
   @doc "Delivers the message to every eligible bot's webhook."
   def deliver_for_message(%Message{} = message, room \\ nil) do
-    room = room || Ash.get!(Room, message.room_id, authorize?: false)
-    message = Ash.load!(message, [:creator], authorize?: false)
+    # System work after a message was created by someone else: load what the payload needs.
+    message =
+      Ash.load!(message, if(room, do: [:creator], else: [:creator, :room]), authorize?: false)
+
+    room = room || message.room
 
     for bot <- eligible_bots(message, room), bot.webhook do
       Async.run(fn -> deliver(bot, bot.webhook.url, message, room) end)

@@ -9,7 +9,24 @@ defmodule Campfire.Accounts.User do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  alias Campfire.Accounts.UserLifecycle
+  alias Campfire.Accounts.User.Actions.AuthenticateBot
+
+  alias Campfire.Accounts.User.Changes.{
+    BanSessionIps,
+    Deactivate,
+    DestroyBans,
+    DestroySessions,
+    DisconnectSockets,
+    GenerateBotToken,
+    GrantOpenRooms,
+    HashPassword,
+    NormalizeEmail,
+    RemoveBannedContent,
+    SaveWebhook,
+    SetRole
+  }
+
+  alias Campfire.Accounts.User.Preparations.VerifyPassword
 
   postgres do
     table "users"
@@ -38,6 +55,34 @@ defmodule Campfire.Accounts.User do
       prepare build(sort: [sort_name: :asc, id: :asc], load: [:webhook])
     end
 
+    read :by_ids do
+      description "The users with the given ids."
+      argument :ids, {:array, :integer}, allow_nil?: false
+      filter expr(id in ^arg(:ids))
+    end
+
+    read :for_avatar do
+      description "A user's public avatar data (nothing else is loaded). No actor needed."
+      get? true
+      argument :id, :integer, allow_nil?: false
+      filter expr(id == ^arg(:id))
+      prepare build(select: [:id, :name, :role, :avatar_key, :updated_at])
+    end
+
+    read :active_by_id do
+      description "The active user with that id. No actor needed."
+      get? true
+      argument :id, :integer, allow_nil?: false
+      filter expr(id == ^arg(:id) and status == :active)
+    end
+
+    read :first_administrator do
+      description "The oldest administrator (the help contact on the sign-in pages). No actor needed."
+      get? true
+      filter expr(role == :administrator)
+      prepare build(sort: [id: :asc], limit: 1)
+    end
+
     read :sign_in do
       description "Returns the active, non-bot user with that email and password, or nothing."
       get? true
@@ -49,7 +94,7 @@ defmodule Campfire.Accounts.User do
                  role != :bot
              )
 
-      prepare &UserLifecycle.verify_password/2
+      prepare VerifyPassword
     end
 
     action :authenticate_bot, :struct do
@@ -58,18 +103,16 @@ defmodule Campfire.Accounts.User do
       allow_nil? true
       argument :bot_key, :string, allow_nil?: false, sensitive?: true
 
-      run fn input, _context ->
-        {:ok, UserLifecycle.find_bot_by_key(input.arguments.bot_key)}
-      end
+      run AuthenticateBot
     end
 
     create :register do
       accept [:name, :email_address, :bio, :avatar_key]
       argument :password, :string, allow_nil?: false, sensitive?: true
       change set_attribute(:role, :member)
-      change &UserLifecycle.normalize_email/2
-      change &UserLifecycle.hash_password/2
-      change after_action(&UserLifecycle.grant_open_rooms/3)
+      change NormalizeEmail
+      change HashPassword
+      change GrantOpenRooms
     end
 
     create :register_administrator do
@@ -77,17 +120,17 @@ defmodule Campfire.Accounts.User do
       accept [:name, :email_address, :bio, :avatar_key]
       argument :password, :string, allow_nil?: false, sensitive?: true
       change set_attribute(:role, :administrator)
-      change &UserLifecycle.normalize_email/2
-      change &UserLifecycle.hash_password/2
-      change after_action(&UserLifecycle.grant_open_rooms/3)
+      change NormalizeEmail
+      change HashPassword
+      change GrantOpenRooms
     end
 
     update :update_profile do
       require_atomic? false
       accept [:name, :email_address, :bio, :avatar_key]
       argument :password, :string, sensitive?: true
-      change &UserLifecycle.normalize_email/2
-      change &UserLifecycle.hash_password/2
+      change NormalizeEmail
+      change HashPassword
       change {Campfire.Changes.DeleteReplacedUpload, attribute: :avatar_key}
     end
 
@@ -96,36 +139,46 @@ defmodule Campfire.Accounts.User do
     end
 
     update :change_role do
+      # SetRole has no atomic implementation yet (Phase 2).
       require_atomic? false
       argument :role, :atom, allow_nil?: false
-      change &UserLifecycle.change_role/2
+      validate attribute_does_not_equal(:role, :bot), message: "can't be changed for a bot"
+      change SetRole
     end
 
     update :deactivate do
       require_atomic? false
       accept []
-      change &UserLifecycle.deactivate/2
+      change Deactivate
+      change DestroySessions
+      change DisconnectSockets
     end
 
     update :ban do
       require_atomic? false
       accept []
-      change &UserLifecycle.ban/2
+      change set_attribute(:status, :banned)
+      # BanSessionIps must run before DestroySessions (it reads the sessions' IPs)
+      change BanSessionIps
+      change DestroySessions
+      change DisconnectSockets
+      change RemoveBannedContent
     end
 
     update :unban do
       require_atomic? false
       accept []
-      change &UserLifecycle.unban/2
+      change set_attribute(:status, :active)
+      change DestroyBans
     end
 
     create :create_bot do
       accept [:name, :avatar_key]
       argument :webhook_url, :string
       change set_attribute(:role, :bot)
-      change set_attribute(:bot_token, &UserLifecycle.generate_bot_token/0)
-      change after_action(&UserLifecycle.grant_open_rooms/3)
-      change after_action(&UserLifecycle.save_webhook/3)
+      change GenerateBotToken
+      change GrantOpenRooms
+      change SaveWebhook
     end
 
     update :update_bot do
@@ -134,14 +187,14 @@ defmodule Campfire.Accounts.User do
       argument :webhook_url, :string
       validate attribute_equals(:role, :bot)
       change {Campfire.Changes.DeleteReplacedUpload, attribute: :avatar_key}
-      change after_action(&UserLifecycle.save_webhook/3)
+      change SaveWebhook
     end
 
     update :reset_bot_key do
       require_atomic? false
       accept []
       validate attribute_equals(:role, :bot)
-      change set_attribute(:bot_token, &UserLifecycle.generate_bot_token/0)
+      change GenerateBotToken
     end
   end
 
@@ -150,8 +203,13 @@ defmodule Campfire.Accounts.User do
       authorize_if always()
     end
 
-    policy action([:read, :people]) do
+    policy action([:read, :people, :by_ids]) do
       authorize_if actor_present()
+    end
+
+    # Used before anyone is signed in (avatars, transfer links, the sign-in page).
+    policy action([:for_avatar, :active_by_id, :first_administrator]) do
+      authorize_if always()
     end
 
     policy action([:update_profile, :set_last_room]) do

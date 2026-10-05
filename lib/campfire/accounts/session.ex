@@ -7,6 +7,8 @@ defmodule Campfire.Accounts.Session do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
+  alias Campfire.Accounts.Session.Changes.{DisconnectUser, TouchIfStale}
+
   @refresh_after_seconds 3600
 
   postgres do
@@ -38,8 +40,10 @@ defmodule Campfire.Accounts.Session do
     end
 
     update :touch do
+      description "Refreshes last_active_at, IP and user agent, but only if the session is over an hour old."
+      require_atomic? false
       accept [:ip_address, :user_agent]
-      change set_attribute(:last_active_at, &DateTime.utc_now/0)
+      change TouchIfStale
     end
 
     destroy :destroy do
@@ -47,14 +51,7 @@ defmodule Campfire.Accounts.Session do
       description "Logs out: deletes the session and disconnects the user's sockets."
       require_atomic? false
 
-      change after_transaction(fn
-               _changeset, {:ok, session}, _context ->
-                 Campfire.Broadcast.disconnect_user(session.user_id)
-                 {:ok, session}
-
-               _changeset, error, _context ->
-                 error
-             end)
+      change DisconnectUser
     end
   end
 

@@ -3,6 +3,7 @@ defmodule CampfireWeb.FirstRunController do
   use CampfireWeb, :controller
 
   alias Campfire.Accounts
+  alias Campfire.Accounts.Errors.AlreadySetUp
   alias CampfireWeb.{ErrorMessages, ImageUpload, UserAuth}
 
   plug :redirect_if_set_up
@@ -23,7 +24,7 @@ defmodule CampfireWeb.FirstRunController do
       {:ok, %{user: user}} ->
         UserAuth.log_in_user(conn, user)
 
-      {:error, :already_set_up} ->
+      {:error, %Ash.Error.Invalid{errors: [%AlreadySetUp{}]}} ->
         redirect(conn, to: ~p"/")
 
       {:error, error} ->

@@ -118,7 +118,7 @@ defmodule CampfireWeb.AuthControllersTest do
       conn = delete(conn, ~p"/session")
       assert redirected_to(conn) == ~p"/"
       refute get_session(conn, :session_token)
-      assert Accounts.get_session_by_token(token) == nil
+      assert Accounts.get_session_by_token!(token) == nil
     end
 
     test "POSTs from a banned IP get 429", %{conn: conn} do

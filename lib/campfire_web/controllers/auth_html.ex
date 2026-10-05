@@ -128,11 +128,8 @@ defmodule CampfireWeb.AuthHTML do
 
   @doc "The administrator shown as the help contact on the sign-in and join pages (or nil)."
   def contact_admin do
-    case Campfire.Accounts.list_users(%{},
-           authorize?: false,
-           query: [filter: [role: :administrator], limit: 1]
-         ) do
-      {:ok, [admin | _]} -> admin
+    case Campfire.Accounts.first_administrator() do
+      {:ok, admin} -> admin
       _ -> nil
     end
   end

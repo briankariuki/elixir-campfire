@@ -9,6 +9,8 @@ defmodule Campfire.Accounts.Ban do
 
   import Bitwise
 
+  alias Campfire.Accounts.Ban.Actions.BannedIp
+
   postgres do
     table "bans"
     repo Campfire.Repo
@@ -23,14 +25,25 @@ defmodule Campfire.Accounts.Ban do
   end
 
   actions do
-    defaults [:read]
+    defaults [:read, :destroy]
 
     create :create do
       accept [:user_id, :ip_address]
     end
+
+    action :banned_ip?, :boolean do
+      description "Whether requests from that IP address are banned."
+      argument :ip_address, :string
+      run BannedIp
+    end
   end
 
   policies do
+    # Anyone may ask whether an IP is banned (checked before sign-in), but only get a yes/no.
+    policy action(:banned_ip?) do
+      authorize_if always()
+    end
+
     policy action_type(:read) do
       authorize_if actor_attribute_equals(:role, :administrator)
     end
