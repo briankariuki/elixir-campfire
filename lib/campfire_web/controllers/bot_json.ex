@@ -40,10 +40,8 @@ defmodule CampfireWeb.BotJSON do
     datetime |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
   end
 
-  # The message body as HTML. Swap for `CampfireWeb.MessageBody.to_html/1` once it exists.
-  defp body_html(%{body: body}) when is_binary(body) and body != "" do
-    escaped = body |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
-    "<p>" <> String.replace(escaped, "\n", "<br>") <> "</p>"
+  defp body_html(%{body: body} = message) when is_binary(body) and body != "" do
+    message |> CampfireWeb.MessageBody.to_html() |> Phoenix.HTML.safe_to_string()
   end
 
   defp body_html(_message), do: ""

@@ -68,7 +68,10 @@ defmodule CampfireWeb.BotAPITest do
       json = json_response(conn, 201)
 
       assert json["body"]["plain_text"] == "Hello! 100% done & dusted"
-      assert json["body"]["html"] == "<p>Hello! 100% done &amp; dusted</p>"
+
+      assert json["body"]["html"] ==
+               ~s(<div class="lexxy-content">Hello! 100% done &amp; dusted</div>)
+
       assert json["creator"]["id"] == bot.id
       assert json["creator"]["role"] == "bot"
       assert json["creator"]["avatar_url"] =~ "/users/#{bot.id}/avatar"
