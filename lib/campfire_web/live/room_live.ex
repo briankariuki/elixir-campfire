@@ -13,6 +13,8 @@ defmodule CampfireWeb.RoomLive do
 
   @loads [:creator, boosts: [:booster]]
   @page_size Message.page_size()
+  # The DOM keeps at most this many messages (like the original Campfire, which trims to ~300)
+  @max_messages 300
   @typing_timeout 5_000
 
   @shared_involvements [:mentions, :everything, :nothing, :invisible]
@@ -114,25 +116,73 @@ defmodule CampfireWeb.RoomLive do
   end
 
   defp assign_page(socket, page, more_older?, more_newer?) do
-    assign(socket,
-      oldest_id: page |> List.first() |> then(&(&1 && &1.id)),
-      newest_id: page |> List.last() |> then(&(&1 && &1.id)),
-      more_older?: more_older?,
-      more_newer?: more_newer?
+    socket
+    |> assign(more_older?: more_older?, more_newer?: more_newer?)
+    |> put_window(Enum.map(page, & &1.id))
+  end
+
+  # The window is the ascending ids of the messages in the stream (at most @max_messages, so it's
+  # cheap to keep). Streams don't keep items on the server, so this is how we know which messages
+  # are in the DOM. The paging cursors always point at its two ends: `load_older` pages before
+  # `oldest_id` and `load_newer` after `newest_id`, which also brings back whatever was trimmed.
+  defp put_window(socket, ids) do
+    assign(socket, loaded_ids: ids, oldest_id: List.first(ids), newest_id: List.last(ids))
+  end
+
+  # Adds messages (ascending, newer than the whole window) at the bottom, trimming the oldest ones
+  # off the top. Anything trimmed makes `more_older?` true.
+  defp append_messages(socket, []), do: socket
+
+  defp append_messages(socket, messages) do
+    ids = socket.assigns.loaded_ids ++ Enum.map(messages, & &1.id)
+    trimmed? = length(ids) > @max_messages
+
+    socket
+    |> put_window(Enum.take(ids, -@max_messages))
+    |> update(:more_older?, &(&1 or trimmed?))
+    |> stream(:messages, Enum.map(messages, &decorate(socket, &1)), limit: -@max_messages)
+  end
+
+  # Adds messages (ascending, older than the whole window) at the top, trimming the newest ones off
+  # the bottom. Anything trimmed makes `more_newer?` true.
+  defp prepend_messages(socket, []), do: socket
+
+  defp prepend_messages(socket, messages) do
+    ids = Enum.map(messages, & &1.id) ++ socket.assigns.loaded_ids
+    trimmed? = length(ids) > @max_messages
+
+    socket
+    |> put_window(Enum.take(ids, @max_messages))
+    |> update(:more_newer?, &(&1 or trimmed?))
+    # Each item is inserted at index 0 in turn, so insert newest first to end up ascending
+    |> stream(:messages, messages |> Enum.map(&decorate(socket, &1)) |> Enum.reverse(),
+      at: 0,
+      limit: @max_messages
     )
+  end
+
+  # Takes a deleted message out of the window: the stream limit counts DOM items, so the ids must
+  # not outlive them
+  defp drop_message(socket, message) do
+    ids = socket.assigns.loaded_ids
+
+    socket =
+      cond do
+        message.id not in ids -> socket
+        # Keep the cursors if nothing is left, an empty window can't be paged from
+        ids == [message.id] -> assign(socket, loaded_ids: [])
+        true -> put_window(socket, List.delete(ids, message.id))
+      end
+
+    stream_delete(socket, :messages, message)
   end
 
   defp page(socket, cursor) do
     Chat.page_messages!(socket.assigns.room.id, cursor, actor: socket.assigns.current_user)
   end
 
-  # Whether a message falls in the range of messages loaded in the stream
-  defp loaded?(socket, message) do
-    %{oldest_id: oldest, newest_id: newest, more_newer?: more_newer?} = socket.assigns
-
-    (is_nil(oldest) or message.id >= oldest) and
-      (not more_newer? or is_nil(newest) or message.id <= newest)
-  end
+  # Whether a message is in the stream (the trimmed window, not everything ever loaded)
+  defp loaded?(socket, message), do: message.id in socket.assigns.loaded_ids
 
   ## Presence
 
@@ -168,8 +218,7 @@ defmodule CampfireWeb.RoomLive do
     socket =
       socket
       |> assign(more_older?: length(older) >= @page_size)
-      |> assign(oldest_id: if(older == [], do: socket.assigns.oldest_id, else: hd(older).id))
-      |> stream(:messages, Enum.reverse(older), at: 0)
+      |> prepend_messages(older)
 
     {:noreply, socket}
   end
@@ -182,10 +231,7 @@ defmodule CampfireWeb.RoomLive do
     socket =
       socket
       |> assign(more_newer?: length(newer) >= @page_size)
-      |> assign(
-        newest_id: if(newer == [], do: socket.assigns.newest_id, else: List.last(newer).id)
-      )
-      |> stream(:messages, newer)
+      |> append_messages(newer)
 
     {:noreply, socket}
   end
@@ -228,6 +274,8 @@ defmodule CampfireWeb.RoomLive do
 
   def handle_event("edit_last", _params, socket) do
     user = socket.assigns.current_user
+    # The last messages must be the ones in the stream, not an older window
+    socket = if socket.assigns.more_newer?, do: load_last_page(socket), else: socket
 
     case socket |> page(%{}) |> Enum.filter(&(&1.creator_id == user.id)) |> List.last() do
       nil -> {:noreply, socket}
@@ -273,7 +321,7 @@ defmodule CampfireWeb.RoomLive do
   def handle_event("delete_message", %{"id" => id}, socket) do
     with_message(socket, id, fn message ->
       case Chat.destroy_message(message, actor: socket.assigns.current_user) do
-        :ok -> stream_delete(socket, :messages, message)
+        :ok -> drop_message(socket, message)
         {:error, error} -> put_flash(socket, :error, error_message(error, "delete"))
       end
     end)
@@ -323,28 +371,30 @@ defmodule CampfireWeb.RoomLive do
 
   @impl true
   def handle_info({:message_created, message}, socket) do
-    if socket.assigns.more_newer? do
-      {:noreply, socket}
-    else
-      socket =
-        socket
-        |> assign(newest_id: max(message.id, socket.assigns.newest_id || 0))
-        |> assign(oldest_id: socket.assigns.oldest_id || message.id)
-        |> insert_message(message)
-        |> stop_typing(message.creator_id)
+    cond do
+      # Scrolled back from the live end: load_newer fetches it when the user gets there
+      socket.assigns.more_newer? ->
+        {:noreply, socket}
 
-      {:noreply, maybe_play_sound(socket, message)}
+      loaded?(socket, message) ->
+        {:noreply, insert_message(socket, message)}
+
+      true ->
+        socket =
+          socket
+          |> append_messages([message])
+          |> stop_typing(message.creator_id)
+
+        {:noreply, maybe_play_sound(socket, message)}
     end
   end
 
   def handle_info({:message_updated, message}, socket) do
-    if loaded?(socket, message),
-      do: {:noreply, insert_message(socket, message)},
-      else: {:noreply, socket}
+    {:noreply, insert_message(socket, message)}
   end
 
   def handle_info({:message_deleted, message}, socket) do
-    {:noreply, stream_delete(socket, :messages, message)}
+    {:noreply, drop_message(socket, message)}
   end
 
   def handle_info({event, boost}, socket) when event in [:boost_created, :boost_deleted] do
@@ -388,17 +438,22 @@ defmodule CampfireWeb.RoomLive do
     end
   end
 
-  # Every stream insert goes through here, so a message re-inserted on an update or a boost keeps
-  # the user's open edit or custom boost form
+  # Re-renders a message that's in the stream, in place: the window and the stream limit don't
+  # change. Messages outside the window are ignored (new ones go through append_messages/2).
   defp insert_message(socket, message) do
+    if loaded?(socket, message),
+      do: stream_insert(socket, :messages, decorate(socket, message)),
+      else: socket
+  end
+
+  # Every message put in the stream goes through here, so one re-inserted on an update or a boost
+  # keeps the user's open edit or custom boost form
+  defp decorate(socket, message) do
     %{editing_id: editing_id, boosting_id: boosting_id} = socket.assigns
 
-    message =
-      message
-      |> Ash.Resource.put_metadata(:editing, message.id == editing_id)
-      |> Ash.Resource.put_metadata(:boosting, message.id == boosting_id)
-
-    stream_insert(socket, :messages, message)
+    message
+    |> Ash.Resource.put_metadata(:editing, message.id == editing_id)
+    |> Ash.Resource.put_metadata(:boosting, message.id == boosting_id)
   end
 
   # Opens the edit (`:editing_id`) or custom boost (`:boosting_id`) form on `message`, or closes it
@@ -423,11 +478,11 @@ defmodule CampfireWeb.RoomLive do
     if socket.assigns[key] == id, do: assign(socket, key, nil), else: socket
   end
 
-  # Re-fetches a message and re-inserts it if it's still visible to the user and in the loaded range
+  # Re-fetches a message and re-inserts it if it's still visible to the user and in the window
   defp reinsert_message(socket, id) do
     case Chat.get_message(id, actor: socket.assigns.current_user, load: @loads) do
       {:ok, %{room_id: room_id} = message} when room_id == socket.assigns.room.id ->
-        if loaded?(socket, message), do: insert_message(socket, message), else: socket
+        insert_message(socket, message)
 
       _ ->
         socket
@@ -564,26 +619,21 @@ defmodule CampfireWeb.RoomLive do
         phx-hook="Lightbox"
         phx-drop-target={@uploads.attachments.ref}
       >
-        <%!-- LiveView's own infinite-scroll hook takes over the element with phx-viewport-*, so the
-             stream lives in an inner (display: contents) element and MessageList on the scroller.
-             A display: contents element has no box (its rect is all zeros), so the hook's "scrolled
-             past the top" check measures the start sentinel instead: absolutely positioned at the
-             top of the scroller's content, it scrolls with the messages without taking a grid row. --%>
+        <%!-- The pager (MessagePager hook) loads older/newer pages on scroll. It's an empty, absolutely
+             positioned element (so it takes no grid row) and not the stream: LiveView's own
+             `phx-viewport-*` hook locks the element it pushes from while an event is in flight, and
+             overlapping locked stream patches come out in the wrong order. --%>
         <div id={"room_#{@room.id}_messages"} class="messages" phx-hook="MessageList">
           <div
-            id={"room_#{@room.id}_messages_start"}
+            id={"room_#{@room.id}_message_pager"}
+            phx-hook="MessagePager"
+            data-load-older={@more_older? && "load_older"}
+            data-load-newer={@more_newer? && "load_newer"}
             style="position: absolute; inset-block-start: 0; block-size: 0; inline-size: 0"
             aria-hidden="true"
           >
           </div>
-          <div
-            id={"room_#{@room.id}_message_stream"}
-            phx-update="stream"
-            phx-viewport-top={@more_older? && "load_older"}
-            phx-viewport-bottom={@more_newer? && "load_newer"}
-            phx-viewport-overrun-target={"room_#{@room.id}_messages_start"}
-            style="display: contents"
-          >
+          <div id={"room_#{@room.id}_message_stream"} phx-update="stream" style="display: contents">
             <MessageComponents.message
               :for={{dom_id, message} <- @streams.messages}
               id={dom_id}

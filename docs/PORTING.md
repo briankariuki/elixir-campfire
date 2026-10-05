@@ -333,7 +333,7 @@ scope "/rooms/:room_id/:bot_key", pipe_through :bot_api   (see §5)
   - Direct rooms come first, newest first. Then shared rooms by name. Up to 20 "Ping" placeholders for users you have no DM with.
   - A "+" new-room button (hidden when room creation is restricted), plus profile and settings links at the bottom.
 - **RoomLive**: the message stream (`stream(:messages, …)`, DOM id `"messages-#{client_message_id}"`) and
-  `phx-viewport-top` to load older messages.
+  the `MessagePager` hook (not `phx-viewport-top`, see `room_live.ex`) to load older and newer pages on scroll.
   - Composer: a `<textarea>` with Enter to send, plus `allow_upload(:attachments, max_entries: 10)`; each file becomes
     its own message.
   - Message options: 8 quick boosts (👍 👏 👋 💪 ❤️ 😂 🎉 🔥), a custom boost, reply (prefills `> quote`), copy link,

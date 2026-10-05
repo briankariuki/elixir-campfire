@@ -408,8 +408,10 @@ defmodule CampfireWeb.MessageComponents do
               class="btn message__action-btn center full-width"
               title="Reply"
               aria-label="Reply"
-              phx-click="reply"
-              phx-value-id={@message.id}
+              phx-click={
+                JS.push("reply", value: %{id: @message.id})
+                |> JS.remove_attribute("open", to: {:closest, "details"})
+              }
             >
               <img
                 src={~p"/images/reply.svg"}
