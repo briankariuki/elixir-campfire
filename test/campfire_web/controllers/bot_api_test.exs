@@ -103,13 +103,14 @@ defmodule CampfireWeb.BotAPITest do
       path = Path.join(System.tmp_dir!(), "bot-upload-#{System.unique_integer([:positive])}.txt")
       File.write!(path, "report contents")
 
-      upload = %Plug.Upload{path: path, filename: "report.txt", content_type: "text/plain"}
+      upload = %Plug.Upload{path: path, filename: "report.txt", content_type: "Text/Plain"}
       conn = post(conn, "/rooms/#{room.id}/#{key}/messages", %{"attachment" => upload})
       json = json_response(conn, 201)
 
       assert json["body"]["plain_text"] == "report.txt"
       {:ok, message} = Chat.get_message(json["id"], actor: admin)
       assert message.attachment_filename == "report.txt"
+      assert message.attachment_content_type == "text/plain"
       assert message.attachment_byte_size == byte_size("report contents")
       assert File.read!(Campfire.Uploads.path(message.attachment_key)) == "report contents"
     end

@@ -29,20 +29,13 @@ defmodule Campfire.Chat.Pagination do
         end
 
       id = args[:before] ->
-        {:ok, with_cursor(base, id, opts, &page_before(base, &1, opts))}
+        {:ok, page_before(base, cursor(base, id, opts) || %{id: id}, opts)}
 
       id = args[:after] ->
-        {:ok, with_cursor(base, id, opts, &page_after(base, &1, opts))}
+        {:ok, page_after(base, cursor(base, id, opts) || %{id: id}, opts)}
 
       true ->
         {:ok, last_page(base, opts)}
-    end
-  end
-
-  defp with_cursor(base, id, opts, fun) do
-    case cursor(base, id, opts) do
-      nil -> []
-      message -> fun.(message)
     end
   end
 
@@ -69,10 +62,28 @@ defmodule Campfire.Chat.Pagination do
     |> Enum.reverse()
   end
 
+  # The cursor message is gone (deleted, or not in this room): page by id instead
+  defp page_before(base, %{id: id}, opts) do
+    base
+    |> Ash.Query.filter(id < ^id)
+    |> Ash.Query.sort(id: :desc)
+    |> Ash.Query.limit(Message.page_size())
+    |> Ash.read!(opts)
+    |> Enum.reverse()
+  end
+
   defp page_after(base, %{inserted_at: at, id: id}, opts) do
     base
     |> Ash.Query.filter(inserted_at > ^at or (inserted_at == ^at and id > ^id))
     |> Ash.Query.sort(inserted_at: :asc, id: :asc)
+    |> Ash.Query.limit(Message.page_size())
+    |> Ash.read!(opts)
+  end
+
+  defp page_after(base, %{id: id}, opts) do
+    base
+    |> Ash.Query.filter(id > ^id)
+    |> Ash.Query.sort(id: :asc)
     |> Ash.Query.limit(Message.page_size())
     |> Ash.read!(opts)
   end

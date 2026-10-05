@@ -48,7 +48,8 @@ defmodule CampfireWeb.RoomLive do
     if connected?(socket) do
       Broadcast.subscribe_room(room.id)
       Broadcast.subscribe_typing(room.id)
-      Accounts.set_last_room(user, room.id, actor: user)
+      # Only when it changes: the update bumps users.updated_at
+      if user.last_room_id != room.id, do: Accounts.set_last_room(user, room.id, actor: user)
     end
 
     socket
@@ -60,7 +61,9 @@ defmodule CampfireWeb.RoomLive do
       page_title: Sidebar.room_name(room, user),
       body_class: "sidebar",
       typing: %{},
-      present?: false
+      present?: false,
+      editing_id: nil,
+      boosting_id: nil
     )
     |> allow_upload(:attachments,
       accept: :any,
@@ -255,7 +258,7 @@ defmodule CampfireWeb.RoomLive do
   end
 
   def handle_event("cancel_edit", %{"id" => id}, socket) do
-    with_message(socket, id, &stream_insert(socket, :messages, &1))
+    with_message(socket, id, &insert_message(assign(socket, editing_id: nil), &1))
   end
 
   def handle_event("cancel_edit", _params, socket), do: {:noreply, socket}
@@ -263,7 +266,7 @@ defmodule CampfireWeb.RoomLive do
   def handle_event("update_message", %{"message_id" => id, "body" => body}, socket) do
     with_message(socket, id, fn message ->
       case Chat.update_message(message, %{body: body}, actor: socket.assigns.current_user) do
-        {:ok, message} -> stream_insert(socket, :messages, message)
+        {:ok, message} -> insert_message(assign(socket, editing_id: nil), message)
         {:error, error} -> put_flash(socket, :error, error_message(error, "edit"))
       end
     end)
@@ -288,12 +291,12 @@ defmodule CampfireWeb.RoomLive do
 
   def handle_event("new_boost", %{"id" => id}, socket) do
     with_message(socket, id, fn message ->
-      stream_insert(socket, :messages, Ash.Resource.put_metadata(message, :boosting, true))
+      insert_message(assign(socket, boosting_id: message.id), message)
     end)
   end
 
   def handle_event("cancel_boost", %{"id" => id}, socket) do
-    with_message(socket, id, &stream_insert(socket, :messages, &1))
+    with_message(socket, id, &insert_message(assign(socket, boosting_id: nil), &1))
   end
 
   def handle_event("cancel_boost", _params, socket), do: {:noreply, socket}
@@ -333,7 +336,7 @@ defmodule CampfireWeb.RoomLive do
         socket
         |> assign(newest_id: max(message.id, socket.assigns.newest_id || 0))
         |> assign(oldest_id: socket.assigns.oldest_id || message.id)
-        |> stream_insert(:messages, message)
+        |> insert_message(message)
         |> stop_typing(message.creator_id)
 
       {:noreply, maybe_play_sound(socket, message)}
@@ -342,7 +345,7 @@ defmodule CampfireWeb.RoomLive do
 
   def handle_info({:message_updated, message}, socket) do
     if loaded?(socket, message),
-      do: {:noreply, stream_insert(socket, :messages, message)},
+      do: {:noreply, insert_message(socket, message)},
       else: {:noreply, socket}
   end
 
@@ -354,7 +357,7 @@ defmodule CampfireWeb.RoomLive do
     case Chat.get_message(boost.message_id, actor: socket.assigns.current_user, load: @loads) do
       {:ok, message} ->
         if loaded?(socket, message),
-          do: {:noreply, stream_insert(socket, :messages, message)},
+          do: {:noreply, insert_message(socket, message)},
           else: {:noreply, socket}
 
       {:error, _} ->
@@ -393,16 +396,34 @@ defmodule CampfireWeb.RoomLive do
 
   defp start_editing(socket, message) do
     if MessageComponents.can_edit?(socket.assigns.current_user, message) do
-      stream_insert(socket, :messages, Ash.Resource.put_metadata(message, :editing, true))
+      insert_message(assign(socket, editing_id: message.id), message)
     else
       put_flash(socket, :error, "You can't edit that message.")
     end
   end
 
+  # Every stream insert goes through here, so a message re-inserted on an update or a boost keeps
+  # the user's open edit or custom boost form
+  defp insert_message(socket, message) do
+    %{editing_id: editing_id, boosting_id: boosting_id} = socket.assigns
+
+    message =
+      message
+      |> Ash.Resource.put_metadata(:editing, message.id == editing_id)
+      |> Ash.Resource.put_metadata(:boosting, message.id == boosting_id)
+
+    stream_insert(socket, :messages, message)
+  end
+
+  defp close_boost_form(%{assigns: %{boosting_id: id}} = socket, %{id: id}),
+    do: assign(socket, boosting_id: nil)
+
+  defp close_boost_form(socket, _message), do: socket
+
   defp create_boost(socket, id, content) do
     with_message(socket, id, fn message ->
       case Chat.create_boost(message, content, actor: socket.assigns.current_user) do
-        {:ok, _boost} -> socket
+        {:ok, _boost} -> close_boost_form(socket, message)
         {:error, error} -> put_flash(socket, :error, error_message(error, "boost"))
       end
     end)
@@ -432,7 +453,9 @@ defmodule CampfireWeb.RoomLive do
                    %{
                      attachment_key: key,
                      attachment_filename: entry.client_name,
-                     attachment_content_type: entry.client_type,
+                     attachment_content_type:
+                       Uploads.normalize_content_type(entry.client_type) ||
+                         MIME.from_path(entry.client_name),
                      attachment_byte_size: entry.client_size
                    },
                    actor: user

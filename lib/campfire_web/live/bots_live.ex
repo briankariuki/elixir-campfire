@@ -127,10 +127,7 @@ defmodule CampfireWeb.BotsLive do
   defp store_avatar(socket) do
     socket
     |> consume_uploaded_entries(:avatar, fn %{path: path}, entry ->
-      case Campfire.Uploads.store(path, entry.client_name) do
-        {:ok, key} -> {:ok, key}
-        _ -> {:ok, nil}
-      end
+      {:ok, ImageUpload.store(path, entry.client_name, entry.client_type)}
     end)
     |> List.first()
   end

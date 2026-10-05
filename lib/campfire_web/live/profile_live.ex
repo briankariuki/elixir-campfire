@@ -34,6 +34,9 @@ defmodule CampfireWeb.ProfileLive do
   end
 
   def handle_event("save", %{"user" => params}, socket) do
+    # The avatar is only set through the upload flow
+    params = Map.delete(params, "avatar_key")
+
     case AshPhoenix.Form.submit(socket.assigns.form, params: params) do
       {:ok, user} ->
         {:noreply,
@@ -67,13 +70,12 @@ defmodule CampfireWeb.ProfileLive do
     if entry.done? do
       key =
         consume_uploaded_entry(socket, entry, fn %{path: path} ->
-          case Campfire.Uploads.store(path, entry.client_name) do
-            {:ok, key} -> {:ok, key}
-            _ -> {:ok, nil}
-          end
+          {:ok, ImageUpload.store(path, entry.client_name, entry.client_type)}
         end)
 
-      if key, do: save_avatar(socket, key), else: {:noreply, socket}
+      if key,
+        do: save_avatar(socket, key),
+        else: {:noreply, put_flash(socket, :error, upload_error(:not_accepted))}
     else
       {:noreply, socket}
     end

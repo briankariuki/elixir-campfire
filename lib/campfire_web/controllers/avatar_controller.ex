@@ -7,6 +7,7 @@ defmodule CampfireWeb.AvatarController do
 
   alias Campfire.Accounts.User
   alias Campfire.Uploads
+  alias CampfireWeb.ImageUpload
 
   @colors ~w(#AF2E1B #CC6324 #3B4B59 #BFA07A #ED8008 #ED3F1C #BF1B1B #736B1E #D07B53
              #736356 #AD1D1D #BF7C2A #C09C6F #698F9C #7C956B #5D618F #3B3633 #67695E)
@@ -21,11 +22,14 @@ defmodule CampfireWeb.AvatarController do
   end
 
   defp send_avatar(conn, user) do
+    conn = ImageUpload.put_security_headers(conn)
+    content_type = ImageUpload.content_type(user.avatar_key)
+
     cond do
-      Uploads.exists?(user.avatar_key) ->
+      content_type && Uploads.exists?(user.avatar_key) ->
         conn
         |> put_resp_header("cache-control", @cache_control)
-        |> put_resp_content_type(MIME.from_path(user.avatar_key), nil)
+        |> put_resp_content_type(content_type, nil)
         |> send_file(200, Uploads.path(user.avatar_key))
 
       User.bot?(user) ->

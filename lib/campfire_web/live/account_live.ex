@@ -93,13 +93,13 @@ defmodule CampfireWeb.AccountLive do
     if entry.done? do
       key =
         consume_uploaded_entry(socket, entry, fn %{path: path} ->
-          case Campfire.Uploads.store(path, entry.client_name) do
-            {:ok, key} -> {:ok, key}
-            _ -> {:ok, nil}
-          end
+          {:ok, ImageUpload.store(path, entry.client_name, entry.client_type)}
         end)
 
-      if key, do: update_account(socket, %{logo_key: key}), else: {:noreply, socket}
+      if key,
+        do: update_account(socket, %{logo_key: key}),
+        else:
+          {:noreply, put_flash(socket, :error, "Please choose an image (JPG, PNG, GIF or WebP)")}
     else
       {:noreply, socket}
     end

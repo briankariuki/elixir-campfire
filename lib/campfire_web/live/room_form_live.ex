@@ -34,7 +34,7 @@ defmodule CampfireWeb.RoomFormLive do
       room: nil,
       name: "New room",
       can_administer?: true,
-      users: Accounts.list_users!(actor: user),
+      users: list_users(user),
       selected: MapSet.new([user.id]),
       initially_selected: MapSet.new([user.id])
     )
@@ -62,7 +62,7 @@ defmodule CampfireWeb.RoomFormLive do
            kind: room.kind,
            name: room.name,
            can_administer?: User.can_administer?(user, room),
-           users: Accounts.list_users!(actor: user),
+           users: list_users(user),
            selected: members,
            initially_selected: members
          )}
@@ -75,6 +75,9 @@ defmodule CampfireWeb.RoomFormLive do
     end
   end
 
+  # Bots are members too: leaving them out would revoke their access on save
+  defp list_users(user), do: Accounts.list_users!(%{include_bots: true}, actor: user)
+
   @impl true
   def handle_params(_params, _uri, socket) do
     case socket.assigns.live_action do
@@ -85,6 +88,10 @@ defmodule CampfireWeb.RoomFormLive do
   end
 
   @impl true
+  def handle_event(event, _params, %{assigns: %{kind: :direct}} = socket)
+      when event in ["change", "toggle_kind", "save"],
+      do: {:noreply, socket}
+
   def handle_event("change", params, socket) do
     socket = assign(socket, name: Map.get(params, "name", socket.assigns.name))
 

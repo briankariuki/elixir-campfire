@@ -28,9 +28,42 @@ defmodule CampfireWeb.AttachmentControllerTest do
 
     assert conn.status == 200
     assert conn.resp_body == "file contents"
-    assert get_resp_header(conn, "content-type") == ["application/pdf"]
+    # Not an inline media type: a download of opaque bytes
+    assert get_resp_header(conn, "content-type") == ["application/octet-stream"]
     [disposition] = get_resp_header(conn, "content-disposition")
-    assert disposition =~ ~s(filename="Q1 report.pdf")
+    assert disposition =~ ~s(attachment; filename="Q1 report.pdf")
+    assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+    assert get_resp_header(conn, "content-security-policy") == ["sandbox"]
+  end
+
+  test "only allowlisted media types are inline, whatever their case", %{
+    user: user,
+    room: room
+  } do
+    for {type, served, disposition} <- [
+          {"image/SVG+xml", "application/octet-stream", "attachment"},
+          {"text/HTML", "application/octet-stream", "attachment"},
+          {"image/x-icon", "application/octet-stream", "attachment"},
+          {" IMAGE/PNG; foo=bar", "image/png", "inline"},
+          {"video/mp4", "video/mp4", "inline"}
+        ] do
+      {:ok, key} = Uploads.store_binary("data", "file.bin")
+
+      message =
+        message_fixture(room, user, %{
+          body: "",
+          attachment_key: key,
+          attachment_filename: "file.bin",
+          attachment_content_type: type
+        })
+
+      conn = build_conn() |> log_in_user(user) |> get(~p"/attachments/#{message.id}")
+
+      assert get_resp_header(conn, "content-type") == [served], type
+      assert [header] = get_resp_header(conn, "content-disposition")
+      assert String.starts_with?(header, disposition), type
+      assert get_resp_header(conn, "content-security-policy") == ["sandbox"]
+    end
   end
 
   test "serves images inline and downloads on request", %{conn: conn, user: user, room: room} do

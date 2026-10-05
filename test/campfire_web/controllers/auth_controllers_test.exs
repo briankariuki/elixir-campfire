@@ -255,6 +255,24 @@ defmodule CampfireWeb.AuthControllersTest do
 
       assert response(conn, 200) == "PNGDATA"
       assert response_content_type(conn, :png) =~ "image/png"
+      assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+
+      assert get_resp_header(conn, "content-security-policy") == [
+               "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+             ]
+    end
+
+    test "never serves an avatar stored with a non-image extension", %{conn: conn} do
+      {:ok, key} = Campfire.Uploads.store_binary("<script>alert(1)</script>", "evil.html")
+      other = user_fixture(name: "Evil Person", avatar_key: key)
+      conn = get(conn, ~p"/users/#{other.id}/avatar")
+
+      refute response(conn, 200) =~ "<script>"
+      assert response(conn, 200) =~ "EP"
+      assert response_content_type(conn, :svg) =~ "image/svg+xml"
+      assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+      assert [csp] = get_resp_header(conn, "content-security-policy")
+      assert csp =~ "sandbox"
     end
 
     test "bots without an avatar get the default bot image", %{conn: conn} do
@@ -276,6 +294,18 @@ defmodule CampfireWeb.AuthControllersTest do
       {:ok, key} = Campfire.Uploads.store_binary("LOGO", "logo.png")
       account_fixture(%{logo_key: key})
       assert build_conn() |> get(~p"/account/logo") |> response(200) == "LOGO"
+    end
+
+    test "never serves a logo stored with a non-image extension" do
+      {:ok, key} = Campfire.Uploads.store_binary("<script>alert(1)</script>", "logo.html")
+      account_fixture(%{logo_key: key})
+      conn = get(build_conn(), ~p"/account/logo")
+
+      refute response(conn, 200) =~ "<script>"
+      assert response_content_type(conn, :png) =~ "image/png"
+      assert get_resp_header(conn, "x-content-type-options") == ["nosniff"]
+      assert [csp] = get_resp_header(conn, "content-security-policy")
+      assert csp =~ "sandbox"
     end
   end
 end

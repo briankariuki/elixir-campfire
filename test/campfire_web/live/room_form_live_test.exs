@@ -91,6 +91,26 @@ defmodule CampfireWeb.RoomFormLiveTest do
       assert other.id in room_members(room, user)
     end
 
+    test "keeps bots in a closed room", %{conn: conn, user: user} do
+      bot = bot_fixture(name: "Deploy Bot")
+      room = closed_room_fixture(user, [user, bot], "With bot")
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}/edit")
+
+      assert has_element?(view, "#user_#{bot.id}[checked]")
+      view |> form("#room-form", %{name: "Still with bot"}) |> render_submit()
+
+      assert room_members(room, user) == Enum.sort([user.id, bot.id])
+    end
+
+    test "lists bots when converting an open room to closed", %{conn: conn, user: user} do
+      bot = bot_fixture(name: "Deploy Bot")
+      room = open_room_fixture(user, "Open")
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}/edit")
+
+      view |> element("#everyone-switch input") |> render_click()
+      assert has_element?(view, "#user_#{bot.id}[checked]")
+    end
+
     test "is read-only for members who can't administer the room", %{
       conn: conn,
       user: user,
@@ -128,6 +148,13 @@ defmodule CampfireWeb.RoomFormLiveTest do
       {:ok, view, html} = live(conn, ~p"/rooms/#{room.id}/edit")
 
       assert html =~ "Other Person"
+
+      # Crafted form events are ignored
+      render_change(view, "change", %{"name" => "Renamed"})
+      render_submit(view, "save", %{"name" => "Renamed"})
+      render_click(view, "toggle_kind", %{})
+      assert render(view) =~ "Other Person"
+
       view |> element("button[aria-label='Delete Ping']") |> render_click()
 
       assert_redirect(view, ~p"/")

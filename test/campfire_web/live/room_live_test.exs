@@ -67,6 +67,26 @@ defmodule CampfireWeb.RoomLiveTest do
       assert reload(user).last_room_id == room.id
       assert Campfire.Presence.present_user_ids(room.id) == [user.id]
     end
+
+    test "doesn't touch the user when the last room is unchanged", %{
+      conn: conn,
+      user: user,
+      room: room
+    } do
+      {:ok, _view, _html} = live(conn, ~p"/rooms/#{room.id}")
+      updated_at = reload(user).updated_at
+
+      {:ok, _view, _html} = live(conn, ~p"/rooms/#{room.id}")
+      assert reload(user).updated_at == updated_at
+    end
+
+    test "a banned IP can't connect", %{conn: conn, other: other, room: room} do
+      Campfire.Accounts.Ban
+      |> Ash.Changeset.for_create(:create, %{user_id: other.id, ip_address: "127.0.0.1"})
+      |> Ash.create!(authorize?: false)
+
+      assert {:error, {:redirect, %{to: "/session/new"}}} = live(conn, ~p"/rooms/#{room.id}")
+    end
   end
 
   describe "messages" do
@@ -166,6 +186,23 @@ defmodule CampfireWeb.RoomLiveTest do
       Chat.destroy_message!(message, actor: other)
       refute has_element?(view, message_dom_id(message))
     end
+
+    test "an open edit form survives boosts and edits elsewhere", %{
+      conn: conn,
+      user: user,
+      other: other,
+      room: room
+    } do
+      message = message_fixture(room, user, %{body: "Mine"})
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      view |> element(message_dom_id(message) <> " .message__edit-btn") |> render_click()
+      boost = Chat.create_boost!(message, "👍", actor: other)
+      assert has_element?(view, "#edit-form-#{message.client_message_id}")
+
+      Chat.destroy_boost!(boost, actor: other)
+      assert has_element?(view, "#edit-form-#{message.client_message_id}")
+    end
   end
 
   describe "boosts" do
@@ -198,6 +235,23 @@ defmodule CampfireWeb.RoomLiveTest do
       refute has_element?(view, "#boost-form-#{message.client_message_id}")
     end
 
+    test "an open custom boost form survives updates elsewhere", %{
+      conn: conn,
+      user: user,
+      other: other,
+      room: room
+    } do
+      message = message_fixture(room, other, %{body: "Boost me"})
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      view |> element(message_dom_id(message) <> " .message__boost-btn") |> render_click()
+      Chat.update_message!(message, %{body: "Boost me please"}, actor: other)
+      Chat.create_boost!(message, "👍", actor: user)
+
+      assert has_element?(view, message_dom_id(message), "Boost me please")
+      assert has_element?(view, "#boost-form-#{message.client_message_id}")
+    end
+
     test "can't delete someone else's boost", %{conn: conn, user: user, other: other, room: room} do
       message = message_fixture(room, user)
       boost = Chat.create_boost!(message, "👍", actor: other)
@@ -217,7 +271,7 @@ defmodule CampfireWeb.RoomLiveTest do
 
       input =
         file_input(view, "#composer", :attachments, [
-          %{name: "photo.png", content: "fake png", type: "image/png"},
+          %{name: "photo.png", content: "fake png", type: "Image/PNG"},
           %{name: "notes.txt", content: "some notes", type: "text/plain"}
         ])
 

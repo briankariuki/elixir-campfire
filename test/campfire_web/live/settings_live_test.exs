@@ -109,6 +109,34 @@ defmodule CampfireWeb.SettingsLiveTest do
       refute Campfire.Uploads.exists?(key)
     end
 
+    test "rejects uploads that aren't both an image name and an image type", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      for {name, type} <- [{"evil.html", "image/png"}, {"me.png", "text/html"}] do
+        avatar =
+          file_input(view, "#avatar-form", :avatar, [
+            %{name: name, content: "<script>alert(1)</script>", type: type}
+          ])
+
+        assert render_upload(avatar, name) =~ "Please choose an image"
+        assert reload(user).avatar_key == nil
+      end
+    end
+
+    test "save ignores avatar_key", %{conn: conn, user: user} do
+      {:ok, key} = Campfire.Uploads.store_binary("<script>", "evil.html")
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      render_submit(view, "save", %{"user" => %{"name" => "Renamed", "avatar_key" => key}})
+
+      user = reload(user)
+      assert user.name == "Renamed"
+      assert user.avatar_key == nil
+    end
+
     test "cycles the involvement bell", %{conn: conn, user: user} do
       room = open_room_fixture(admin_fixture(), "Watercooler")
       {:ok, membership} = Chat.get_membership(room.id, actor: user)

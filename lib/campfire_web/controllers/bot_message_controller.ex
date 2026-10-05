@@ -36,7 +36,9 @@ defmodule CampfireWeb.BotMessageController do
       attrs = %{
         attachment_key: key,
         attachment_filename: upload.filename,
-        attachment_content_type: upload.content_type || MIME.from_path(upload.filename),
+        attachment_content_type:
+          Campfire.Uploads.normalize_content_type(upload.content_type) ||
+            MIME.from_path(upload.filename),
         attachment_byte_size: size
       }
 

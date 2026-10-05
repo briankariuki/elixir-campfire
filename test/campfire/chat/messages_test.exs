@@ -295,10 +295,26 @@ defmodule Campfire.Chat.MessagesTest do
                Enum.slice(all_ids, 51, 40)
     end
 
-    test "a cursor from another room yields nothing", %{room: room, author: author} do
+    test "a deleted cursor pages by id", %{room: room, author: author, messages: messages} do
+      cursor = Enum.at(messages, 50)
+      Chat.destroy_message!(cursor, actor: author)
+
+      assert ids(Chat.page_messages!(room.id, %{before: cursor.id}, actor: author)) ==
+               messages |> Enum.slice(10, 40) |> ids()
+
+      assert ids(Chat.page_messages!(room.id, %{after: cursor.id}, actor: author)) ==
+               messages |> Enum.slice(51, 40) |> ids()
+
+      assert ids(Chat.page_messages!(room.id, %{around: cursor.id}, actor: author)) ==
+               messages |> Enum.take(-40) |> ids()
+    end
+
+    test "a cursor from another room only pages this room", %{room: room, author: author} do
       other_room = open_room_fixture(author)
       other = message_fixture(other_room, author)
-      assert Chat.page_messages!(room.id, %{before: other.id}, actor: author) == []
+      page = Chat.page_messages!(room.id, %{before: other.id}, actor: author)
+      assert length(page) == 40
+      assert Enum.all?(page, &(&1.room_id == room.id))
     end
   end
 

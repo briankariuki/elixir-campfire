@@ -53,6 +53,20 @@ defmodule Campfire.Uploads do
     :ok
   end
 
+  @doc """
+  Normalises a content type: lowercased and trimmed, without parameters (`; charset=...`).
+  Returns nil for nil or blank.
+  """
+  @spec normalize_content_type(String.t() | nil) :: String.t() | nil
+  def normalize_content_type(type) when is_binary(type) do
+    case type |> String.split(";") |> hd() |> String.trim() |> String.downcase() do
+      "" -> nil
+      type -> type
+    end
+  end
+
+  def normalize_content_type(_type), do: nil
+
   defp new_key(filename) do
     random = :crypto.strong_rand_bytes(18) |> Base.url_encode64(padding: false)
     random <> extension(filename)

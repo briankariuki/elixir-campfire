@@ -98,7 +98,7 @@ defmodule CampfireWeb.UserAuth do
   def on_mount(:ensure_authenticated, _params, session, socket) do
     socket = mount_current_user(socket, session)
 
-    if socket.assigns.current_user do
+    if socket.assigns.current_user && not banned_peer?(socket) do
       {:cont, socket}
     else
       {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/session/new")}
@@ -133,6 +133,15 @@ defmodule CampfireWeb.UserAuth do
   end
 
   ## Helpers
+
+  # Banned IPs can't act over the LiveView socket (the HTTP side is `block_banned_ip`)
+  defp banned_peer?(socket) do
+    Phoenix.LiveView.connected?(socket) and
+      case Phoenix.LiveView.get_connect_info(socket, :peer_data) do
+        %{address: address} -> Accounts.banned_ip?(address |> :inet.ntoa() |> to_string())
+        _ -> false
+      end
+  end
 
   defp maybe_store_return_to(%{method: "GET"} = conn),
     do: put_session(conn, :user_return_to, current_path(conn))
