@@ -12,7 +12,7 @@ defmodule Campfire.Chat.Room do
   require Ash.Query
 
   alias Campfire.Accounts.User
-  alias Campfire.Chat.Room.{Actions, Changes, Validations}
+  alias Campfire.Chat.Room.{Actions, Changes}
 
   postgres do
     table "rooms"
@@ -67,19 +67,23 @@ defmodule Campfire.Chat.Room do
     end
 
     update :update_open do
-      require_atomic? false
       accept [:name]
-      validate Validations.NotDirect
+
+      validate attribute_does_not_equal(:kind, :direct),
+        message: "can't be changed for a direct room"
+
       change set_attribute(:kind, :open)
       change Changes.GrantActiveUsers
       change Changes.NotifyMembers
     end
 
     update :update_closed do
-      require_atomic? false
       accept [:name]
       argument :user_ids, {:array, :integer}, default: []
-      validate Validations.NotDirect
+
+      validate attribute_does_not_equal(:kind, :direct),
+        message: "can't be changed for a direct room"
+
       change set_attribute(:kind, :closed)
       change Changes.ReviseMembers
       change Changes.NotifyMembers
@@ -94,6 +98,7 @@ defmodule Campfire.Chat.Room do
     destroy :destroy do
       primary? true
       description "Deletes the room with its memberships, messages, boosts and attachment files."
+      # DestroyContents reads the room's members and attachments before they cascade away.
       require_atomic? false
       change Changes.DestroyContents
     end

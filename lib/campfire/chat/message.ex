@@ -105,6 +105,7 @@ defmodule Campfire.Chat.Message do
 
     update :update do
       primary? true
+      # ResolveMentions reads the stored room_id and body, and needs the room's member list.
       require_atomic? false
       accept [:body]
       validate Validations.HasContent
@@ -115,7 +116,6 @@ defmodule Campfire.Chat.Message do
 
     destroy :destroy do
       primary? true
-      require_atomic? false
       change Changes.DeleteAttachment
       change {BroadcastAfterCommit, topic: :room, event: :message_deleted}
     end

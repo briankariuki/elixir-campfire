@@ -41,6 +41,7 @@ defmodule Campfire.Accounts.Session do
 
     update :touch do
       description "Refreshes last_active_at, IP and user agent, but only if the session is over an hour old."
+      # TouchIfStale reads the stored last_active_at, and skips the write entirely when fresh.
       require_atomic? false
       accept [:ip_address, :user_agent]
       change TouchIfStale
@@ -49,7 +50,6 @@ defmodule Campfire.Accounts.Session do
     destroy :destroy do
       primary? true
       description "Logs out: deletes the session and disconnects the user's sockets."
-      require_atomic? false
 
       change DisconnectUser
     end

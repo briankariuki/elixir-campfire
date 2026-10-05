@@ -56,13 +56,11 @@ defmodule Campfire.Chat.Membership do
     end
 
     update :set_involvement do
-      require_atomic? false
       accept [:involvement]
       change {BroadcastAfterCommit, topic: :user, event: :sidebar_changed, payload: :none}
     end
 
     update :mark_read do
-      require_atomic? false
       accept []
       change set_attribute(:unread_at, nil)
       change {BroadcastAfterCommit, topic: :user, event: :room_read, payload: :room_id}
@@ -75,7 +73,6 @@ defmodule Campfire.Chat.Membership do
 
     destroy :revoke do
       description "Removes a user from a room (admin or room creator)."
-      require_atomic? false
       change {BroadcastAfterCommit, topic: :user, event: :room_removed, payload: :room_id}
       change {BroadcastAfterCommit, topic: :user, event: :sidebar_changed, payload: :none}
     end

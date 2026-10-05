@@ -42,7 +42,6 @@ defmodule Campfire.Chat.Boost do
 
     destroy :destroy do
       primary? true
-      require_atomic? false
       change {BroadcastAfterCommit, topic: :room, event: :boost_deleted}
     end
   end

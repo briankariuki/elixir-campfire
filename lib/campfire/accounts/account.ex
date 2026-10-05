@@ -27,13 +27,13 @@ defmodule Campfire.Accounts.Account do
     end
 
     update :update do
+      # DeleteReplacedUpload reads the stored logo_key.
       require_atomic? false
       accept [:name, :logo_key, :restrict_room_creation_to_administrators]
       change {Campfire.Changes.DeleteReplacedUpload, attribute: :logo_key}
     end
 
     update :reset_join_code do
-      require_atomic? false
       accept []
       change set_attribute(:join_code, &__MODULE__.generate_join_code/0)
     end

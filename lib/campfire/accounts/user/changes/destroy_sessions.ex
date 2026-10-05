@@ -15,8 +15,8 @@ defmodule Campfire.Accounts.User.Changes.DestroySessions do
     Ash.Changeset.after_action(changeset, fn _changeset, user ->
       user_id = user.id
 
-      # System work on behalf of an administrator action. `:destroy` isn't atomic (it reads the
-      # record for its socket-disconnect hook), hence the stream fallback.
+      # System work on behalf of an administrator action. `:destroy` is atomic, so this is one
+      # DELETE; its hooks still run, and `:stream` is the fallback.
       Session
       |> Ash.Query.filter(user_id == ^user_id)
       |> Ash.bulk_destroy!(:destroy, %{},
@@ -29,4 +29,8 @@ defmodule Campfire.Accounts.User.Changes.DestroySessions do
       {:ok, user}
     end)
   end
+
+  # Everything is in hooks and arguments, so the same changeset works for atomic actions.
+  @impl true
+  def atomic(changeset, opts, context), do: {:ok, change(changeset, opts, context)}
 end

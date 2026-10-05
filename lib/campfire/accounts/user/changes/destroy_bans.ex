@@ -20,4 +20,8 @@ defmodule Campfire.Accounts.User.Changes.DestroyBans do
       {:ok, user}
     end)
   end
+
+  # Everything is in hooks and arguments, so the same changeset works for atomic actions.
+  @impl true
+  def atomic(changeset, opts, context), do: {:ok, change(changeset, opts, context)}
 end

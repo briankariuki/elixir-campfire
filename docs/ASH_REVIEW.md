@@ -62,6 +62,20 @@ the actions:
 
 Target: remove the flag from ~12 actions, keep it (with a comment) on the ~5 that read the current record.
 
+**Status after Phase 2:** 13 of the 20 flags in `lib/campfire` are gone (20 -> 7). Removed from `Membership.set_involvement`,
+`mark_read`, `revoke`, `Boost.destroy`, `Session.destroy`, `Message.destroy`, `Room.update_open`, `update_closed`
+(the `NotDirect` validation became `attribute_does_not_equal(:kind, :direct)` and was deleted), `User.change_role`,
+`ban`, `unban`, `reset_bot_key`, and `Account.reset_join_code`. The hook-only change modules gained an `atomic/3` that
+returns `{:ok, change(...)}`. Remaining flags, each commented in the resource:
+
+| Action | Why it stays |
+|---|---|
+| `Message.update` | `ResolveMentions` reads the stored `room_id` and needs the room's member list |
+| `Room.destroy` | `DestroyContents` reads members and attachment keys before the rows cascade away |
+| `Session.touch` | `TouchIfStale` reads the stored `last_active_at` and skips the write when fresh (an atomic version would write on every request) |
+| `User.deactivate` | `Deactivate` reads the stored email to mangle it |
+| `User.update_profile`, `User.update_bot`, `Account.update` | `DeleteReplacedUpload` reads the stored old key |
+
 ### 1.3 Anonymous functions instead of change/validation/preparation modules (M)
 
 42 `change &Mod.fun/2`, `change after_action(&...)`, `validate &...`, `run fn ...` sites. Rules: "Prefer to put code

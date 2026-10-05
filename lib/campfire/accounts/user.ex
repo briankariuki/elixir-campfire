@@ -127,6 +127,7 @@ defmodule Campfire.Accounts.User do
     end
 
     update :update_profile do
+      # DeleteReplacedUpload reads the stored avatar_key.
       require_atomic? false
       accept [:name, :email_address, :bio, :avatar_key]
       argument :password, :string, sensitive?: true
@@ -140,14 +141,13 @@ defmodule Campfire.Accounts.User do
     end
 
     update :change_role do
-      # SetRole has no atomic implementation yet (Phase 2).
-      require_atomic? false
       argument :role, :atom, allow_nil?: false
       validate attribute_does_not_equal(:role, :bot), message: "can't be changed for a bot"
       change SetRole
     end
 
     update :deactivate do
+      # Deactivate reads the stored email address to mangle it.
       require_atomic? false
       accept []
       change Deactivate
@@ -156,7 +156,6 @@ defmodule Campfire.Accounts.User do
     end
 
     update :ban do
-      require_atomic? false
       accept []
       change set_attribute(:status, :banned)
       # BanSessionIps must run before DestroySessions (it reads the sessions' IPs)
@@ -167,7 +166,6 @@ defmodule Campfire.Accounts.User do
     end
 
     update :unban do
-      require_atomic? false
       accept []
       change set_attribute(:status, :active)
       change DestroyBans
@@ -183,6 +181,7 @@ defmodule Campfire.Accounts.User do
     end
 
     update :update_bot do
+      # DeleteReplacedUpload reads the stored avatar_key.
       require_atomic? false
       accept [:name, :avatar_key]
       argument :webhook_url, :string
@@ -192,7 +191,6 @@ defmodule Campfire.Accounts.User do
     end
 
     update :reset_bot_key do
-      require_atomic? false
       accept []
       validate attribute_equals(:role, :bot)
       change GenerateBotToken

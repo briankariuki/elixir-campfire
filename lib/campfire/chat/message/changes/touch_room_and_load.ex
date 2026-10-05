@@ -24,4 +24,8 @@ defmodule Campfire.Chat.Message.Changes.TouchRoomAndLoad do
     |> Ash.Query.filter(id == ^room_id)
     |> Ash.bulk_update!(:touch, %{}, authorize?: false, strategy: :atomic)
   end
+
+  # Everything is in hooks and arguments, so the same changeset works for atomic actions.
+  @impl true
+  def atomic(changeset, opts, context), do: {:ok, change(changeset, opts, context)}
 end
