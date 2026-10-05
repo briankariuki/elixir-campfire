@@ -158,9 +158,9 @@ defmodule CampfireWeb.UserAuth do
   # Banned IPs can't act over the LiveView socket (the HTTP side is `block_banned_ip`)
   defp banned_peer?(socket) do
     Phoenix.LiveView.connected?(socket) and
-      case Phoenix.LiveView.get_connect_info(socket, :peer_data) do
-        %{address: address} -> Accounts.banned_ip?(address |> :inet.ntoa() |> to_string())
-        _ -> false
+      case CampfireWeb.ClientIP.from_socket(socket) do
+        nil -> false
+        ip -> Accounts.banned_ip?(ip)
       end
   end
 

@@ -1,0 +1,67 @@
+# Production-style deployment: Postgres, the Campfire release, and Caddy in front for HTTPS.
+#
+#   cp .env.example .env    # then fill in PHX_HOST, SECRET_KEY_BASE and POSTGRES_PASSWORD
+#   docker compose up -d --build
+#
+# Caddy gets a certificate for PHX_HOST automatically (point the domain's DNS at this host and
+# open ports 80 and 443). With PHX_HOST=localhost it uses a locally trusted development cert.
+# The first visit goes to /first_run, which creates the account and the first administrator.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: campfire
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: campfire
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U campfire -d campfire"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ecto://campfire:${POSTGRES_PASSWORD}@db/campfire
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env (mix phx.gen.secret)}
+      PHX_HOST: ${PHX_HOST:?set PHX_HOST in .env}
+      UPLOADS_DIR: /data/uploads
+      # The app is only reachable through Caddy, which overwrites X-Forwarded-For
+      TRUST_PROXY_HEADERS: "true"
+    # Pending migrations run on every start
+    command: ["/bin/sh", "-c", "/app/bin/migrate && exec /app/bin/server"]
+    volumes:
+      - uploads:/data/uploads
+    expose:
+      - "4000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      PHX_HOST: ${PHX_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  db:
+  uploads:
+  caddy_data:
+  caddy_config:

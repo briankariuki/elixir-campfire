@@ -23,6 +23,12 @@ end
 config :campfire, CampfireWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Behind a reverse proxy that overwrites X-Forwarded-For (e.g. Caddy in docker-compose.yml), take
+# the client IP from that header. Never enable it when clients can reach the app directly.
+if System.get_env("TRUST_PROXY_HEADERS") in ~w(true 1) do
+  config :campfire, :trust_proxy_headers, true
+end
+
 # config/config.exs points uploads at priv/uploads, which in a release is inside the build
 # (the path is fixed when the release is built), so production must set UPLOADS_DIR.
 if config_env() != :prod do

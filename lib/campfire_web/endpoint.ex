@@ -12,8 +12,8 @@ defmodule CampfireWeb.Endpoint do
   ]
 
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [:peer_data, session: @session_options]],
-    longpoll: [connect_info: [:peer_data, session: @session_options]]
+    websocket: [connect_info: [:peer_data, :x_headers, session: @session_options]],
+    longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -38,6 +38,8 @@ defmodule CampfireWeb.Endpoint do
   end
 
   plug Plug.RequestId
+  # The client's IP from X-Forwarded-For when behind a trusted proxy (TRUST_PROXY_HEADERS)
+  plug CampfireWeb.ClientIP
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
   plug Plug.Parsers,
