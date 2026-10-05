@@ -29,6 +29,7 @@ defmodule Campfire.Accounts.Ban do
 
     create :create do
       accept [:user_id, :ip_address]
+      validate Campfire.Accounts.Ban.Validations.PublicIp
     end
 
     action :banned_ip?, :boolean do

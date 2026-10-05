@@ -352,6 +352,22 @@ defmodule Campfire.AccountsTest do
       refute Accounts.banned_ip?("8.8.4.4")
     end
 
+    test "Ban.create rejects invalid and private IP addresses" do
+      user = user_fixture()
+
+      for ip <- ["not an ip", "10.0.0.1", "127.0.0.1", "::1", "fe80::1"] do
+        assert {:error, %Ash.Error.Invalid{errors: [%{field: :ip_address}]}} =
+                 Campfire.Accounts.Ban
+                 |> Ash.Changeset.for_create(:create, %{user_id: user.id, ip_address: ip})
+                 |> Ash.create(authorize?: false)
+      end
+
+      assert {:ok, %{ip_address: "8.8.8.8"}} =
+               Campfire.Accounts.Ban
+               |> Ash.Changeset.for_create(:create, %{user_id: user.id, ip_address: "8.8.8.8"})
+               |> Ash.create(authorize?: false)
+    end
+
     test "public_ip?" do
       alias Campfire.Accounts.Ban
       assert Ban.public_ip?("8.8.8.8")
