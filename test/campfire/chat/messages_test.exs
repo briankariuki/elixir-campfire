@@ -90,6 +90,38 @@ defmodule Campfire.Chat.MessagesTest do
       assert_receive {:room_unread, ^room_id}
       assert_receive {:room_unread, ^room_id}
     end
+
+    test "notifications are held until the outermost transaction commits", %{
+      room: room,
+      author: author,
+      member: member
+    } do
+      Broadcast.subscribe_room(room.id)
+      Broadcast.subscribe_user(member.id)
+
+      # Ash only knows about transactions it opened itself: inside one, `return_notifications?`
+      # hands the notifications back for the caller to send once it has committed.
+      {:ok, {message, notifications}} =
+        Ash.DataLayer.transaction(Message, fn ->
+          {:ok, message, notifications} =
+            Chat.create_message(room, %{body: "In a transaction"},
+              actor: author,
+              return_notifications?: true
+            )
+
+          # Both the PubSub notifier (room topic) and the Fanout notifier (per-member) are held.
+          refute_received {:message_created, _}
+          refute_received {:room_unread, _}
+          {message, notifications}
+        end)
+
+      refute_received {:message_created, _}
+      Ash.Notifier.notify(notifications)
+
+      assert_received {:message_created, %Message{id: id}}
+      assert id == message.id
+      assert_received {:room_unread, _}
+    end
   end
 
   describe "mentions" do
@@ -391,8 +423,9 @@ defmodule Campfire.Chat.MessagesTest do
 
       assert {:ok, boost} = Chat.create_boost(message, "🎉", actor: member)
       assert boost.booster.id == member.id
-      assert_receive {:boost_created, %{id: id, content: "🎉"}}
+      assert_receive {:boost_created, %{id: id, content: "🎉", booster: %{}}}
       assert id == boost.id
+      assert boost.room_id == room.id
 
       assert [%{content: "🎉"}] =
                Chat.page_messages!(room.id, actor: author) |> List.last() |> Map.get(:boosts)

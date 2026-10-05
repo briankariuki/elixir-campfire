@@ -7,11 +7,11 @@ defmodule Campfire.Chat.Message do
     otp_app: :campfire,
     domain: Campfire.Chat,
     data_layer: AshPostgres.DataLayer,
-    authorizers: [Ash.Policy.Authorizer]
+    authorizers: [Ash.Policy.Authorizer],
+    notifiers: [Ash.Notifier.PubSub]
 
   require Ash.Query
 
-  alias Campfire.Chat.Changes.BroadcastAfterCommit
   alias Campfire.Chat.Message.{Changes, Validations}
 
   @page_size 40
@@ -100,7 +100,8 @@ defmodule Campfire.Chat.Message do
       change Changes.ResolveMentions
       change Changes.TouchRoomAndLoad
       change Changes.MarkUnread
-      change Changes.NotifyCreated
+      # Unread marks for every member and bot webhooks, after commit.
+      notifiers [Campfire.Notifiers.Fanout]
     end
 
     update :update do
@@ -111,13 +112,11 @@ defmodule Campfire.Chat.Message do
       validate Validations.HasContent
       change Changes.ResolveMentions
       change Changes.TouchRoomAndLoad
-      change {BroadcastAfterCommit, topic: :room, event: :message_updated}
     end
 
     destroy :destroy do
       primary? true
       change Changes.DeleteAttachment
-      change {BroadcastAfterCommit, topic: :room, event: :message_deleted}
     end
   end
 
@@ -139,6 +138,18 @@ defmodule Campfire.Chat.Message do
       authorize_if expr(creator_id == ^actor(:id))
       authorize_if actor_attribute_equals(:role, :administrator)
     end
+  end
+
+  # `TouchRoomAndLoad` loads `:creator` and `boosts: [:booster]` on created and updated messages,
+  # so `notification.data` already carries what the web layer renders.
+  pub_sub do
+    module Campfire.PubSubBroadcaster
+    prefix "room"
+    broadcast_type :notification
+
+    publish :create, [:room_id], event: "message_created"
+    publish :update, [:room_id], event: "message_updated"
+    publish :destroy, [:room_id], event: "message_deleted"
   end
 
   attributes do

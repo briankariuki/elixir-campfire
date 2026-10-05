@@ -92,6 +92,35 @@ defmodule Campfire.Chat.RoomsTest do
       assert_receive {:room_removed, room_id}
       assert room_id == room.id
     end
+
+    test "a user revoked by update_closed is told once, and only after the commit" do
+      creator = user_fixture()
+      keep = user_fixture()
+      gone = user_fixture()
+      room = closed_room_fixture(creator, [creator, keep, gone])
+      Broadcast.subscribe_user(gone.id)
+      room_id = room.id
+
+      {:ok, notifications} =
+        Ash.DataLayer.transaction(Room, fn ->
+          {:ok, _room, notifications} =
+            Chat.update_closed_room(room, %{user_ids: [creator.id, keep.id]},
+              actor: creator,
+              return_notifications?: true
+            )
+
+          refute_received {:room_removed, _}
+          refute_received :sidebar_changed
+          notifications
+        end)
+
+      Ash.Notifier.notify(notifications)
+
+      assert_received {:room_removed, ^room_id}
+      assert_received :sidebar_changed
+      refute_received {:room_removed, _}
+      refute_received :sidebar_changed
+    end
   end
 
   describe "conversion" do

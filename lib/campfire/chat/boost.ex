@@ -5,12 +5,10 @@ defmodule Campfire.Chat.Boost do
     otp_app: :campfire,
     domain: Campfire.Chat,
     data_layer: AshPostgres.DataLayer,
-    authorizers: [Ash.Policy.Authorizer]
-
-  require Ash.Query
+    authorizers: [Ash.Policy.Authorizer],
+    notifiers: [Ash.Notifier.PubSub]
 
   alias Campfire.Chat.Boost.Changes
-  alias Campfire.Chat.Changes.BroadcastAfterCommit
   alias Campfire.Chat.Message
 
   postgres do
@@ -19,6 +17,7 @@ defmodule Campfire.Chat.Boost do
 
     references do
       reference :message, on_delete: :delete
+      reference :room, on_delete: :delete
       reference :booster, on_delete: :delete
     end
 
@@ -37,12 +36,10 @@ defmodule Campfire.Chat.Boost do
       change Changes.SetMessage
       change relate_actor(:booster)
       change Changes.LoadBooster
-      change {BroadcastAfterCommit, topic: :room, event: :boost_created}
     end
 
     destroy :destroy do
       primary? true
-      change {BroadcastAfterCommit, topic: :room, event: :boost_deleted}
     end
   end
 
@@ -58,6 +55,16 @@ defmodule Campfire.Chat.Boost do
     policy action(:destroy) do
       authorize_if expr(booster_id == ^actor(:id))
     end
+  end
+
+  # `LoadBooster` already loads `:booster` on the created boost.
+  pub_sub do
+    module Campfire.PubSubBroadcaster
+    prefix "room"
+    broadcast_type :notification
+
+    publish :create, [:room_id], event: "boost_created"
+    publish :destroy, [:room_id], event: "boost_deleted"
   end
 
   attributes do
@@ -79,24 +86,16 @@ defmodule Campfire.Chat.Boost do
       public? true
     end
 
+    # Denormalized from the message (set by `SetMessage`): the topic the boost is broadcast on.
+    belongs_to :room, Campfire.Chat.Room do
+      allow_nil? false
+      attribute_type :integer
+    end
+
     belongs_to :booster, Campfire.Accounts.User do
       allow_nil? false
       attribute_type :integer
       public? true
-    end
-  end
-
-  @doc "The id of the room the boost's message is in."
-  def room_id(%__MODULE__{message_id: message_id}) do
-    # Internal lookup for routing broadcasts, so no policy check. It reads the message rather
-    # than a `room_id` calculation on the boost because it also runs for a just-deleted boost.
-    Message
-    |> Ash.Query.filter(id == ^message_id)
-    |> Ash.Query.select([:room_id])
-    |> Ash.read_one!(authorize?: false)
-    |> case do
-      %{room_id: room_id} -> room_id
-      nil -> nil
     end
   end
 end

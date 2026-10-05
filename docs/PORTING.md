@@ -204,7 +204,13 @@ Use **Ash policies** with `actor` on every resource that users touch from the we
 ## 4. Realtime contract (PubSub)
 
 `Campfire.PubSub` already exists. **The domain layer emits these; the web layer only subscribes.**
-Use the helper `Campfire.Broadcast` (`room/2`, `user/2`).
+`Campfire.Broadcast` holds the topic names and subscribe helpers.
+
+Broadcasts come from `Ash.Notifier.PubSub` (`Message`, `Boost`, `Membership`) and from the custom notifier
+`Campfire.Notifiers.Fanout` (per-member fan-outs and bot webhooks, attached per action), both sent after the outermost
+transaction commits. `Campfire.PubSubBroadcaster` is the PubSub notifier's `broadcast/3` module: it turns the
+`%Ash.Notifier.Notification{}` into the tuples below and sends them over `Campfire.PubSub`, so subscribers never see
+Ash structs. Bulk actions that must notify pass `notify?: true`.
 
 | Topic | Message | Emitted by |
 |---|---|---|

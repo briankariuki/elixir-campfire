@@ -36,7 +36,7 @@ defmodule Campfire.Chat.Room do
       change set_attribute(:kind, :open)
       change relate_actor(:creator)
       change Changes.GrantActiveUsers
-      change Changes.NotifyMembers
+      notifiers [Campfire.Notifiers.Fanout]
     end
 
     create :create_closed do
@@ -45,7 +45,7 @@ defmodule Campfire.Chat.Room do
       change set_attribute(:kind, :closed)
       change relate_actor(:creator)
       change Changes.ReviseMembers
-      change Changes.NotifyMembers
+      notifiers [Campfire.Notifiers.Fanout]
     end
 
     create :create_direct do
@@ -56,7 +56,7 @@ defmodule Campfire.Chat.Room do
       change relate_actor(:creator)
       change Changes.SetDirectKey
       change Changes.GrantDirectUsers
-      change Changes.NotifyMembers
+      notifiers [Campfire.Notifiers.Fanout]
     end
 
     action :find_or_create_direct, :struct do
@@ -74,7 +74,7 @@ defmodule Campfire.Chat.Room do
 
       change set_attribute(:kind, :open)
       change Changes.GrantActiveUsers
-      change Changes.NotifyMembers
+      notifiers [Campfire.Notifiers.Fanout]
     end
 
     update :update_closed do
@@ -86,7 +86,7 @@ defmodule Campfire.Chat.Room do
 
       change set_attribute(:kind, :closed)
       change Changes.ReviseMembers
-      change Changes.NotifyMembers
+      notifiers [Campfire.Notifiers.Fanout]
     end
 
     update :touch do
@@ -101,6 +101,7 @@ defmodule Campfire.Chat.Room do
       # DestroyContents reads the room's members and attachments before they cascade away.
       require_atomic? false
       change Changes.DestroyContents
+      notifiers [Campfire.Notifiers.Fanout]
     end
   end
 

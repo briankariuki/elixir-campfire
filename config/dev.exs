@@ -1,5 +1,7 @@
 import Config
 config :ash, policies: [show_policy_breakdowns?: true]
+# Logs every Ash.Notifier.PubSub broadcast (topics and notification).
+config :ash, :pub_sub, debug?: true
 
 # Configure your database
 config :campfire, Campfire.Repo,

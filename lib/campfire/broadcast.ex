@@ -2,7 +2,9 @@ defmodule Campfire.Broadcast do
   @moduledoc """
   PubSub topics and messages emitted by the domain layer (see docs/PORTING.md §4).
 
-  The web layer subscribes with `subscribe_room/1`, `subscribe_user/1`, etc. and handles:
+  The messages are sent by `Ash.Notifier.PubSub` (via `Campfire.PubSubBroadcaster`) and
+  `Campfire.Notifiers.Fanout`; this module holds the topic names and helpers. The web layer
+  subscribes with `subscribe_room/1`, `subscribe_user/1`, etc. and handles:
 
     * `"room:<id>"`: `{:message_created, message}`, `{:message_updated, message}`,
       `{:message_deleted, message}`, `{:boost_created, boost}`, `{:boost_deleted, boost}`
@@ -21,9 +23,6 @@ defmodule Campfire.Broadcast do
   def subscribe_room(room_id), do: Phoenix.PubSub.subscribe(@pubsub, room_topic(room_id))
   def subscribe_user(user_id), do: Phoenix.PubSub.subscribe(@pubsub, user_topic(user_id))
   def subscribe_typing(room_id), do: Phoenix.PubSub.subscribe(@pubsub, typing_topic(room_id))
-
-  @doc "Broadcasts `message` to `\"room:<room_id>\"`."
-  def room(room_id, message), do: Phoenix.PubSub.broadcast(@pubsub, room_topic(room_id), message)
 
   @doc "Broadcasts `message` to `\"user:<user_id>\"`."
   def user(user_id, message), do: Phoenix.PubSub.broadcast(@pubsub, user_topic(user_id), message)

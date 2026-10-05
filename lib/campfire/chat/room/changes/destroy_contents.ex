@@ -1,7 +1,8 @@
 defmodule Campfire.Chat.Room.Changes.DestroyContents do
   @moduledoc """
   Deleting a room: remembers its members and attachment keys before the rows cascade away, then
-  after commit deletes the files and tells the members the room is gone.
+  after commit deletes the files. The members are told by `Campfire.Notifiers.Fanout`, from the
+  `:room_contents` context.
 
   Not atomic: it reads the room's contents first.
   """
@@ -9,7 +10,7 @@ defmodule Campfire.Chat.Room.Changes.DestroyContents do
   use Ash.Resource.Change
 
   alias Ash.Changeset
-  alias Campfire.{Broadcast, Uploads}
+  alias Campfire.Uploads
   alias Campfire.Chat.{Membership, Message}
 
   require Ash.Query
@@ -27,10 +28,8 @@ defmodule Campfire.Chat.Room.Changes.DestroyContents do
     end)
     |> Changeset.after_transaction(fn
       changeset, {:ok, room} ->
-        %{member_ids: member_ids, attachment_keys: keys} = changeset.context.room_contents
+        %{attachment_keys: keys} = changeset.context.room_contents
         Enum.each(keys, &Uploads.delete/1)
-        Broadcast.users(member_ids, {:room_removed, room.id})
-        Broadcast.users(member_ids, :sidebar_changed)
         {:ok, room}
 
       _changeset, error ->

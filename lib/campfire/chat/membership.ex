@@ -9,11 +9,11 @@ defmodule Campfire.Chat.Membership do
     otp_app: :campfire,
     domain: Campfire.Chat,
     data_layer: AshPostgres.DataLayer,
-    authorizers: [Ash.Policy.Authorizer]
+    authorizers: [Ash.Policy.Authorizer],
+    notifiers: [Ash.Notifier.PubSub]
 
   require Ash.Query
 
-  alias Campfire.Chat.Changes.BroadcastAfterCommit
   alias Campfire.Chat.Room
 
   postgres do
@@ -57,13 +57,11 @@ defmodule Campfire.Chat.Membership do
 
     update :set_involvement do
       accept [:involvement]
-      change {BroadcastAfterCommit, topic: :user, event: :sidebar_changed, payload: :none}
     end
 
     update :mark_read do
       accept []
       change set_attribute(:unread_at, nil)
-      change {BroadcastAfterCommit, topic: :user, event: :room_read, payload: :room_id}
     end
 
     update :mark_unread do
@@ -73,8 +71,6 @@ defmodule Campfire.Chat.Membership do
 
     destroy :revoke do
       description "Removes a user from a room (admin or room creator)."
-      change {BroadcastAfterCommit, topic: :user, event: :room_removed, payload: :room_id}
-      change {BroadcastAfterCommit, topic: :user, event: :sidebar_changed, payload: :none}
     end
   end
 
@@ -92,6 +88,17 @@ defmodule Campfire.Chat.Membership do
       authorize_if actor_attribute_equals(:role, :administrator)
       authorize_if expr(room.creator_id == ^actor(:id))
     end
+  end
+
+  pub_sub do
+    module Campfire.PubSubBroadcaster
+    prefix "user"
+    broadcast_type :notification
+
+    publish :mark_read, [:user_id], event: "room_read"
+    publish :set_involvement, [:user_id], event: "sidebar_changed"
+    publish :revoke, [:user_id], event: "room_removed"
+    publish :revoke, [:user_id], event: "sidebar_changed"
   end
 
   attributes do

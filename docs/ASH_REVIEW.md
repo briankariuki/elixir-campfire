@@ -86,7 +86,7 @@ Groupings that fall out naturally:
 
 - `Campfire.Chat.Message.Changes.{SetRoom, EnsureClientMessageId, ResolveMentions, AfterCreate, AfterUpdate, AfterDestroy}`
 - `Campfire.Chat.Message.Validations.HasContent`
-- `Campfire.Chat.Room.Changes.{GrantActiveUsers, ReviseMembers, NotifyMembers, SetDirectKey, DestroyContents}`
+- `Campfire.Chat.Room.Changes.{GrantActiveUsers, ReviseMembers, SetDirectKey, DestroyContents}`
 - `Campfire.Accounts.User.Changes.{HashPassword, NormalizeEmail, GrantOpenRooms, SaveWebhook, Deactivate, Ban, Unban}`
 - `Campfire.Accounts.User.Preparations.VerifyPassword`
 - a single shared `Campfire.Changes.Broadcast` change taking `topic:`/`message:` options (replaces five hand-written
@@ -109,6 +109,19 @@ expressed as a static topic template, so this is a *partial* migration:
 Message *shape* changes: the notifier sends `%Ash.Notifier.Notification{}` (or a `%Phoenix.Socket.Broadcast{}`), not
 `{:message_created, msg}`. The LiveViews' `handle_info` clauses change accordingly. Set `broadcast_type :notification`
 and match on `%Ash.Notifier.Notification{action: %{name: :create}, data: message}`.
+
+**Status after Phase 3.** Done, with one deviation from the text above: `Campfire.PubSubBroadcaster` translates the
+`%Ash.Notifier.Notification{}` back into the existing tuples, so the LiveViews' `handle_info` clauses did not change.
+`Message`, `Boost` and `Membership` use `Ash.Notifier.PubSub` (`prefix "room"`/`"user"`, templates `[:room_id]`/
+`[:user_id]`, so the topics are the same strings as `Campfire.Broadcast.room_topic/1`/`user_topic/1`). `Boost` gained a
+denormalized `room_id` (set by `SetMessage`, backfilled in the migration), which replaced `Boost.room_id/1`. The per-member
+fan-outs (`room_unread`, `sidebar_changed` for a room's members, `room_removed` on room destroy) and bot webhooks live in
+one custom notifier, `Campfire.Notifiers.Fanout`, attached per action with `notifiers [...]`. `BroadcastAfterCommit`,
+`NotifyCreated` and `NotifyMembers` are deleted; no `after_transaction` hook in the domain broadcasts any more.
+Notifications from nested actions (the bulk `:revoke` inside `ReviseMembers`) are held until the outer Ash action's
+transaction commits, so revoked users get exactly one `room_removed` and `sidebar_changed`. Caveat: Ash only knows
+about transactions it opened; inside a raw `Repo.transaction/1` notifications are dropped (with a warning), so wrap
+multi-action work in an Ash action or use `return_notifications?: true` and `Ash.Notifier.notify/1`.
 
 ### 1.5 Bulk deletes skip action side effects (H)
 

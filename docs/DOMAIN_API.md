@@ -157,7 +157,7 @@ attachment_byte_size: size}, actor: user)`. One file per message.
 | `destroy_boost(boost)` | **the booster only** (no admin override) | `:ok`. Broadcasts `{:boost_deleted, boost}` |
 | `get_boost(id)` | member of the message's room | `{:ok, boost}` |
 
-`%Boost{}` fields: `id, message_id, booster_id, content, inserted_at`. Messages load boosts ordered oldest first.
+`%Boost{}` fields: `id, message_id, room_id (denormalized from the message), booster_id, content, inserted_at`. Messages load boosts ordered oldest first.
 
 ### Recent searches
 

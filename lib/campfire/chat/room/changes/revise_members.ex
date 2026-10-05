@@ -12,11 +12,11 @@ defmodule Campfire.Chat.Room.Changes.ReviseMembers do
   def change(changeset, _opts, _context) do
     Changeset.after_action(changeset, fn changeset, room ->
       wanted = Room.existing_user_ids(Changeset.get_argument(changeset, :user_ids) || [])
-      revoked = Membership.revoke(room.id, Membership.member_ids(room.id) -- wanted)
+      Membership.revoke(room.id, Membership.member_ids(room.id) -- wanted)
       Membership.grant(room, wanted)
-      # Revoked users are also told after the outer commit (NotifyMembers): the :revoke action's
-      # own broadcast runs inside this transaction, so a sidebar reload could still see the room.
-      {:ok, Ash.Resource.put_metadata(room, :revoked_user_ids, revoked)}
+      # The `:revoke` notifications (`room_removed`, `sidebar_changed`) of the nested bulk destroy
+      # are held until the outer transaction commits, so a reload sees the room gone.
+      {:ok, room}
     end)
   end
 
