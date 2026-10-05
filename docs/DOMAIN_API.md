@@ -33,7 +33,7 @@ Read `docs/PORTING.md` for the product rules; this file only describes the funct
 | `get_account()` | no actor | `{:ok, %Account{} \| nil}` (`get_account!()` returns the account or nil) |
 | `set_up?()` | no actor | `true` once first run has happened (predicate interface: bare boolean; `set_up()` gives `{:ok, boolean}`) |
 | `valid_join_code?(code)` | no actor | boolean (constant-time compare; `nil` is false) |
-| `first_run(%{name, email_address, password, avatar_key?})` | no actor | `{:ok, %{account:, user:, room:}}`: one transaction that creates the account, an **administrator**, and the open room "All Talk" (with the admin as a member). If an account exists: `{:error, %Ash.Error.Invalid{errors: [%Campfire.Accounts.Errors.AlreadySetUp{}]}}`. `first_run!/1` raises instead |
+| `first_run(%{name, email_address, password, avatar_key?})` | no actor | `{:ok, %{account:, user:, room:}}`: one transaction that creates the account, an **administrator**, and the open room "All Talk" (with the admin as a member). A missing or invalid email address (or other invalid input) gives `{:error, %Ash.Error.Invalid{}}` and creates nothing. If an account exists: `{:error, %Ash.Error.Invalid{errors: [%Campfire.Accounts.Errors.AlreadySetUp{}]}}`. `first_run!/1` raises instead |
 | `update_account(account, %{name?, logo_key?, restrict_room_creation_to_administrators?})` | admin | `{:ok, account}`. A replaced `logo_key` file is deleted |
 | `reset_join_code(account)` | admin | `{:ok, account}` with a new `join_code` (`XXXX-XXXX-XXXX`) |
 
@@ -43,22 +43,22 @@ Read `docs/PORTING.md` for the product rules; this file only describes the funct
 
 | Function | Actor | Returns / notes |
 |---|---|---|
-| `register_user(%{name, email_address, password, bio?, avatar_key?})` | no actor | `{:ok, user}` (role `:member`). Joins every open room. The email is trimmed and lowercased; a duplicate email gives `{:error, %Ash.Error.Invalid{}}`. **The caller checks the join code** with `valid_join_code?/1` |
+| `register_user(%{name, email_address, password, bio?, avatar_key?})` | no actor | `{:ok, user}` (role `:member`). Joins every open room. The email is trimmed and lowercased, and is required: a missing, blank or malformed one (needs a single `@` with text on both sides, no spaces), or a duplicate, gives `{:error, %Ash.Error.Invalid{}}` with an `:email_address` field error. **The caller checks the join code** with `valid_join_code?/1` |
 | `sign_in(email, password, %{ip_address: ip})` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. Active non-bot users only (bcrypt; timing-safe when the user doesn't exist). The optional `ip_address` input keys the rate limit (10 calls per 3 minutes, failed or not; keyed on the email when omitted). Over the limit: `{:error, %Ash.Error.Forbidden{errors: [%AshRateLimiter.LimitExceeded{}]}}` (the controller renders 429) |
 | `authenticate_bot(bot_key)` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. The key is `"<id>-<token>"`. Active bots only; `Plug.Crypto.secure_compare`; an empty token is rejected |
 | `get_user(id)` | any user | `{:ok, user}` |
 | `get_user_for_avatar(id)` | no actor | `{:ok, %User{} \| nil}` with only `id, name, role, avatar_key, updated_at` selected. For the public avatar route (an invalid id gives `{:error, _}`) |
 | `get_active_user(id)` | no actor | `{:ok, %User{} \| nil}`, `nil` unless `status == :active`. For session-transfer links (the caller still rejects bots) |
-| `first_administrator()` | no actor | `{:ok, %User{} \| nil}`: the oldest administrator, shown as the help contact on the sign-in pages |
+| `first_administrator()` | no actor | `{:ok, %User{} \| nil}`: the oldest active administrator, shown as the help contact on the sign-in pages |
 | `list_users_by_ids(ids)` | any user | `[%User{}]` for those ids (`list_users_by_ids!/2`). Without an actor it returns `[]`; message rendering, which has no actor, passes `authorize?: false` |
 | `list_users(%{include_banned: false, include_bots: false})` | any user | Active people ordered by name. The params map is optional. Admins' account page: `%{include_banned: true}` |
 | `list_bots()` | admin | Active bots ordered by name, with `:webhook` loaded (`bot.webhook && bot.webhook.url`) |
-| `update_profile(user, %{name?, email_address?, bio?, avatar_key?, password?})` | the user themself | `{:ok, user}`. A blank or missing password keeps the old one. A replaced avatar file is deleted |
+| `update_profile(user, %{name?, email_address?, bio?, avatar_key?, password?})` | the user themself | `{:ok, user}`. A blank or missing password keeps the old one. A given `email_address` is checked like `register_user` (it can't be blanked). A replaced avatar file is deleted |
 | `set_last_room(user, room_id)` | the user themself | `{:ok, user}` (`last_room_id`) |
-| `change_role(user, role)` | admin | `role` is `:administrator` (or `"administrator"`); anything else means `:member`. Bots can't be changed (Invalid) |
+| `change_role(user, role)` | admin, not self | `role` is `:administrator` (or `"administrator"`); anything else means `:member`. Bots can't be changed (Invalid). Disconnects the user's sockets so they reconnect with the new role |
 | `deactivate_user(user)` | admin, not self | `{:ok, user}`. Deletes non-direct memberships, sessions and searches; status `:deactivated`; email becomes `name-deactivated-<uuid>@host`; disconnects sockets. Also used to "delete" a bot |
-| `ban_user(user)` | admin, not self | `{:ok, user}`. Bans each public session IP (private and loopback IPs are skipped), deletes sessions, status `:banned`, disconnects sockets, then enqueues the Oban job that deletes all their messages (each broadcasts `{:message_deleted, m}`) |
-| `unban_user(user)` | admin | `{:ok, user}`. Deletes the bans; status `:active` (messages aren't restored) |
+| `ban_user(user)` | admin, not self | `{:ok, user}`. Deactivated users can't be banned (Invalid). Bans each public session IP (private and loopback IPs are skipped), deletes sessions, status `:banned`, disconnects sockets, then enqueues the Oban job that deletes all their messages (each broadcasts `{:message_deleted, m}`) |
+| `unban_user(user)` | admin | `{:ok, user}`. Only for banned users (otherwise Invalid). Deletes the bans; status `:active` (messages aren't restored) |
 | `create_bot(%{name, avatar_key?, webhook_url?})` | admin | `{:ok, bot}` (role `:bot`, 12-char `bot_token`). Joins the open rooms. Creates the webhook when a URL is given (it must be `http(s)://`) |
 | `update_bot(bot, %{name?, avatar_key?, webhook_url?})` | admin | `{:ok, bot}`. An omitted `webhook_url` leaves the webhook unchanged; a nil or blank one **deletes** it; otherwise it is created or updated |
 | `reset_bot_key(bot)` | admin | `{:ok, bot}` with a new `bot_token` |
@@ -141,7 +141,8 @@ Helpers on `Campfire.Chat.Message` (plain functions, no loading needed):
 `:plain_text` and `:content_type`.
 
 Mentions: the body holds `@Full Name` text. When a message is saved, every `@Name` that matches a **room member**
-exactly (longest names first, not followed by a letter, digit or `_`) ends up in `mentioned_user_ids`.
+exactly (longest names first, neither preceded nor followed by a letter, digit or `_`, so `ops@Ann.com` is not a
+mention) ends up in `mentioned_user_ids`; every member with that name is mentioned.
 To highlight mentions when rendering, use `Campfire.Chat.Mentions.mention_regex(name)` for each mentioned user's name.
 `Mentions.room_members(room_id)` returns `[{id, name}]`.
 
@@ -197,7 +198,7 @@ and `Campfire.Presence.untrack_user(self(), room_id, user.id)` when hidden. Then
 ## Uploads (`Campfire.Uploads`)
 
 Files are stored on local disk under `config :campfire, :uploads_dir` (default `priv/uploads`, a tmp dir in test,
-the `UPLOADS_DIR` env var at runtime).
+the `UPLOADS_DIR` env var at runtime, required in production).
 
 - `store(source_path, filename) :: {:ok, key}`: copies the file. `filename` only provides the extension.
 - `store_binary(binary, filename) :: {:ok, key}`

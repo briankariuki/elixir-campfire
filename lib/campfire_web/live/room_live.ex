@@ -257,16 +257,14 @@ defmodule CampfireWeb.RoomLive do
     with_message(socket, id, &start_editing(socket, &1))
   end
 
-  def handle_event("cancel_edit", %{"id" => id}, socket) do
-    with_message(socket, id, &insert_message(assign(socket, editing_id: nil), &1))
+  def handle_event("cancel_edit", _params, socket) do
+    {:noreply, put_form(socket, :editing_id, nil)}
   end
-
-  def handle_event("cancel_edit", _params, socket), do: {:noreply, socket}
 
   def handle_event("update_message", %{"message_id" => id, "body" => body}, socket) do
     with_message(socket, id, fn message ->
       case Chat.update_message(message, %{body: body}, actor: socket.assigns.current_user) do
-        {:ok, message} -> insert_message(assign(socket, editing_id: nil), message)
+        {:ok, message} -> socket |> close_form(:editing_id, message) |> insert_message(message)
         {:error, error} -> put_flash(socket, :error, error_message(error, "edit"))
       end
     end)
@@ -290,16 +288,12 @@ defmodule CampfireWeb.RoomLive do
   end
 
   def handle_event("new_boost", %{"id" => id}, socket) do
-    with_message(socket, id, fn message ->
-      insert_message(assign(socket, boosting_id: message.id), message)
-    end)
+    with_message(socket, id, &put_form(socket, :boosting_id, &1))
   end
 
-  def handle_event("cancel_boost", %{"id" => id}, socket) do
-    with_message(socket, id, &insert_message(assign(socket, boosting_id: nil), &1))
+  def handle_event("cancel_boost", _params, socket) do
+    {:noreply, put_form(socket, :boosting_id, nil)}
   end
-
-  def handle_event("cancel_boost", _params, socket), do: {:noreply, socket}
 
   def handle_event("delete_boost", %{"id" => id}, socket) do
     user = socket.assigns.current_user
@@ -354,15 +348,7 @@ defmodule CampfireWeb.RoomLive do
   end
 
   def handle_info({event, boost}, socket) when event in [:boost_created, :boost_deleted] do
-    case Chat.get_message(boost.message_id, actor: socket.assigns.current_user, load: @loads) do
-      {:ok, message} ->
-        if loaded?(socket, message),
-          do: {:noreply, insert_message(socket, message)},
-          else: {:noreply, socket}
-
-      {:error, _} ->
-        {:noreply, socket}
-    end
+    {:noreply, reinsert_message(socket, boost.message_id)}
   end
 
   def handle_info({:typing, :start, %{id: id, name: name}}, socket) do
@@ -396,7 +382,7 @@ defmodule CampfireWeb.RoomLive do
 
   defp start_editing(socket, message) do
     if MessageComponents.can_edit?(socket.assigns.current_user, message) do
-      insert_message(assign(socket, editing_id: message.id), message)
+      put_form(socket, :editing_id, message)
     else
       put_flash(socket, :error, "You can't edit that message.")
     end
@@ -415,15 +401,43 @@ defmodule CampfireWeb.RoomLive do
     stream_insert(socket, :messages, message)
   end
 
-  defp close_boost_form(%{assigns: %{boosting_id: id}} = socket, %{id: id}),
-    do: assign(socket, boosting_id: nil)
+  # Opens the edit (`:editing_id`) or custom boost (`:boosting_id`) form on `message`, or closes it
+  # with `nil`. One of each is open at a time: the message whose form was open is re-inserted so
+  # its form goes away (otherwise it stays rendered, and Escape cancels both).
+  defp put_form(socket, key, message) do
+    previous_id = socket.assigns[key]
+    id = message && message.id
+    socket = assign(socket, key, id)
 
-  defp close_boost_form(socket, _message), do: socket
+    socket =
+      if previous_id && previous_id != id,
+        do: reinsert_message(socket, previous_id),
+        else: socket
+
+    if message, do: insert_message(socket, message), else: socket
+  end
+
+  # Clears the form state when it belongs to `message` (which the caller re-inserts or which comes
+  # back through PubSub)
+  defp close_form(socket, key, %{id: id}) do
+    if socket.assigns[key] == id, do: assign(socket, key, nil), else: socket
+  end
+
+  # Re-fetches a message and re-inserts it if it's still visible to the user and in the loaded range
+  defp reinsert_message(socket, id) do
+    case Chat.get_message(id, actor: socket.assigns.current_user, load: @loads) do
+      {:ok, %{room_id: room_id} = message} when room_id == socket.assigns.room.id ->
+        if loaded?(socket, message), do: insert_message(socket, message), else: socket
+
+      _ ->
+        socket
+    end
+  end
 
   defp create_boost(socket, id, content) do
     with_message(socket, id, fn message ->
       case Chat.create_boost(message, content, actor: socket.assigns.current_user) do
-        {:ok, _boost} -> close_boost_form(socket, message)
+        {:ok, _boost} -> close_form(socket, :boosting_id, message)
         {:error, error} -> put_flash(socket, :error, error_message(error, "boost"))
       end
     end)
@@ -551,13 +565,23 @@ defmodule CampfireWeb.RoomLive do
         phx-drop-target={@uploads.attachments.ref}
       >
         <%!-- LiveView's own infinite-scroll hook takes over the element with phx-viewport-*, so the
-             stream lives in an inner (display: contents) element and MessageList on the scroller --%>
+             stream lives in an inner (display: contents) element and MessageList on the scroller.
+             A display: contents element has no box (its rect is all zeros), so the hook's "scrolled
+             past the top" check measures the start sentinel instead: absolutely positioned at the
+             top of the scroller's content, it scrolls with the messages without taking a grid row. --%>
         <div id={"room_#{@room.id}_messages"} class="messages" phx-hook="MessageList">
+          <div
+            id={"room_#{@room.id}_messages_start"}
+            style="position: absolute; inset-block-start: 0; block-size: 0; inline-size: 0"
+            aria-hidden="true"
+          >
+          </div>
           <div
             id={"room_#{@room.id}_message_stream"}
             phx-update="stream"
             phx-viewport-top={@more_older? && "load_older"}
             phx-viewport-bottom={@more_newer? && "load_newer"}
+            phx-viewport-overrun-target={"room_#{@room.id}_messages_start"}
             style="display: contents"
           >
             <MessageComponents.message

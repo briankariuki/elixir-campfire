@@ -53,7 +53,9 @@ defmodule Campfire.Accounts.Account do
                     room: [type: :struct, constraints: [instance_of: Campfire.Chat.Room]]
                   ]
 
-      # Not required here: User's own validations report missing or blank values.
+      # Not required here: `User.register_administrator` reports missing or blank values (the
+      # name attribute is required, `Validations.EmailAddress` checks the email, the password
+      # argument is required).
       argument :name, :string
       argument :email_address, :string
       argument :password, :string, sensitive?: true

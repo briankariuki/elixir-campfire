@@ -34,6 +34,20 @@ defmodule Campfire.AccountsTest do
       assert {:error, %Ash.Error.Invalid{errors: [%AlreadySetUp{}]}} =
                Accounts.first_run(%{name: "B", email_address: "b@example.com", password: "pw"})
     end
+
+    test "requires a valid email address, and creates nothing without one" do
+      for email <- [nil, "", "   ", "no-at-sign", "a@b@c", "a b@example.com", "@example.com"] do
+        assert {:error, error} =
+                 Accounts.first_run(%{name: "A", email_address: email, password: "pw"})
+
+        assert email_error?(error), "expected an email error for #{inspect(email)}"
+      end
+
+      # Omitting it entirely (a crafted form post).
+      assert {:error, error} = Accounts.first_run(%{name: "A", password: "pw"})
+      assert email_error?(error)
+      refute Accounts.set_up?()
+    end
   end
 
   describe "read interfaces for the web layer" do
@@ -77,6 +91,18 @@ defmodule Campfire.AccountsTest do
       user_fixture()
       assert {:ok, %User{id: id}} = Accounts.first_administrator()
       assert id == first.id
+    end
+
+    test "first_administrator skips deactivated and banned administrators" do
+      first = admin_fixture()
+      second = admin_fixture()
+      third = admin_fixture()
+
+      Accounts.deactivate_user!(first, actor: third)
+      Accounts.ban_user!(second, actor: third)
+
+      assert {:ok, %User{id: id}} = Accounts.first_administrator()
+      assert id == third.id
     end
   end
 
@@ -149,6 +175,26 @@ defmodule Campfire.AccountsTest do
                })
     end
 
+    test "registering requires a valid email address" do
+      for email <- [nil, "", "   ", "no-at-sign", "a@b@c", "a b@example.com", "x@"] do
+        assert {:error, error} =
+                 Accounts.register_user(%{name: "X", email_address: email, password: "pw"})
+
+        assert email_error?(error), "expected an email error for #{inspect(email)}"
+      end
+
+      assert {:error, error} = Accounts.register_user(%{name: "X", password: "pw"})
+      assert email_error?(error)
+
+      # Lenient: surrounding whitespace is trimmed, and unusual but plausible addresses pass.
+      assert {:ok, %{email_address: "x+tag@sub.example"}} =
+               Accounts.register_user(%{
+                 name: "X",
+                 email_address: "  X+Tag@Sub.Example ",
+                 password: "pw"
+               })
+    end
+
     test "sign in with email and password, active users only" do
       user = user_fixture(email_address: "me@example.com", password: "right")
 
@@ -206,6 +252,22 @@ defmodule Campfire.AccountsTest do
       assert {:ok, nil} = Accounts.sign_in(user.email_address, "old")
     end
 
+    test "the email address can be changed, but not removed or made invalid" do
+      user = user_fixture()
+
+      for email <- [nil, "", "  ", "nope", "a@b@c"] do
+        assert {:error, error} =
+                 Accounts.update_profile(user, %{email_address: email}, actor: user)
+
+        assert email_error?(error), "expected an email error for #{inspect(email)}"
+      end
+
+      assert reload(user).email_address == user.email_address
+
+      assert {:ok, %{email_address: "new@example.com"}} =
+               Accounts.update_profile(user, %{email_address: "New@Example.com"}, actor: user)
+    end
+
     test "set_last_room" do
       user = user_fixture()
       assert {:ok, %{last_room_id: 42}} = Accounts.set_last_room(user, 42, actor: user)
@@ -261,6 +323,22 @@ defmodule Campfire.AccountsTest do
       {:ok, admin_user} = Accounts.change_role(user, :administrator, actor: admin)
       assert {:ok, %{role: :member}} = Accounts.change_role(admin_user, :bot, actor: admin)
       assert {:error, _} = Accounts.change_role(bot_fixture(), :administrator, actor: admin)
+    end
+
+    test "administrators can't change their own role" do
+      admin = admin_fixture()
+
+      assert {:error, %Ash.Error.Forbidden{}} = Accounts.change_role(admin, :member, actor: admin)
+      assert reload(admin).role == :administrator
+    end
+
+    test "changing a role disconnects the user's sockets" do
+      admin = admin_fixture()
+      user = admin_fixture()
+      Phoenix.PubSub.subscribe(Campfire.PubSub, Broadcast.socket_id(user.id))
+
+      assert {:ok, %{role: :member}} = Accounts.change_role(user, :member, actor: admin)
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect"}
     end
   end
 
@@ -370,6 +448,25 @@ defmodule Campfire.AccountsTest do
 
       assert {:ok, %{status: :active}} = Accounts.unban_user(banned, actor: admin)
       refute Accounts.banned_ip?("8.8.4.4")
+    end
+
+    test "deactivated users can't be banned, and only banned users can be unbanned" do
+      admin = admin_fixture()
+      active = user_fixture()
+      deactivated = Accounts.deactivate_user!(user_fixture(), actor: admin)
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :status}]}} =
+               Accounts.ban_user(deactivated, actor: admin)
+
+      assert reload(deactivated).status == :deactivated
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :status}]}} =
+               Accounts.unban_user(active, actor: admin)
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :status}]}} =
+               Accounts.unban_user(deactivated, actor: admin)
+
+      assert reload(deactivated).status == :deactivated
     end
 
     test "removing the messages is an Oban job that can run again" do
@@ -518,4 +615,7 @@ defmodule Campfire.AccountsTest do
       assert {:ok, nil} = Accounts.authenticate_bot(User.bot_key(reset))
     end
   end
+
+  defp email_error?(%{errors: errors}),
+    do: Enum.any?(errors, &match?(%{field: :email_address}, &1))
 end

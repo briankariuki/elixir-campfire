@@ -23,11 +23,24 @@ end
 config :campfire, CampfireWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
-if uploads_dir = System.get_env("UPLOADS_DIR") do
-  config :campfire, :uploads_dir, uploads_dir
+# config/config.exs points uploads at priv/uploads, which in a release is inside the build
+# (the path is fixed when the release is built), so production must set UPLOADS_DIR.
+if config_env() != :prod do
+  if uploads_dir = System.get_env("UPLOADS_DIR") do
+    config :campfire, :uploads_dir, uploads_dir
+  end
 end
 
 if config_env() == :prod do
+  uploads_dir =
+    System.get_env("UPLOADS_DIR") ||
+      raise """
+      environment variable UPLOADS_DIR is missing.
+      Set it to a persistent directory for uploaded files, for example: /data/uploads
+      """
+
+  config :campfire, :uploads_dir, uploads_dir
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """

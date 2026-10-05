@@ -158,6 +158,34 @@ defmodule Campfire.Chat.MessagesTest do
       assert Mentions.mentioned_ids("hi Bob", [{1, "Bob"}]) == []
       assert Mentions.mentioned_ids(nil, [{1, "Bob"}]) == []
     end
+
+    test "mentioned_ids/2 ignores @Name inside a word, like an email address" do
+      members = [{1, "Ann"}, {2, "Deploy"}]
+
+      assert Mentions.mentioned_ids("ping ops@Deploy.example", members) == []
+      assert Mentions.mentioned_ids("mail bob@Ann.com", members) == []
+      assert Mentions.mentioned_ids("x_@Ann 9@Ann", members) == []
+      assert Mentions.mentioned_ids("ops@Deploy.example, cc @Ann", members) == [1]
+    end
+
+    test "mentioned_ids/2 matches at the start, after spaces, punctuation and newlines" do
+      members = [{1, "Ann"}]
+
+      for body <- ["@Ann", "hi @Ann", "(@Ann)", "hi,@Ann", "> @Ann", "first\n@Ann", "@@Ann"] do
+        assert Mentions.mentioned_ids(body, members) == [1],
+               "expected a mention in #{inspect(body)}"
+      end
+
+      assert Mentions.mentioned_ids("@Ann Smith@Ann", [{1, "Ann"}, {2, "Ann Smith"}]) == [2, 1]
+    end
+
+    test "mentioned_ids/2 mentions every member with the mentioned name" do
+      members = [{1, "Ann"}, {2, "Bob"}, {3, "Ann"}, {4, "Ann Smith"}]
+
+      assert Mentions.mentioned_ids("hi @Ann", members) == [1, 3]
+      assert Mentions.mentioned_ids("@Ann Smith and @Ann", members) == [4, 1, 3]
+      assert Mentions.mentioned_ids("@Ann Smith", members) == [4]
+    end
   end
 
   describe "content type and plain text" do

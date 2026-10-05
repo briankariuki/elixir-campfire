@@ -20,6 +20,7 @@ defmodule Campfire.Webhooks do
   require Logger
 
   alias Campfire.Accounts.User
+  alias Campfire.Chat.Mentions
   alias Campfire.Chat.Message
   alias Campfire.Uploads
 
@@ -113,7 +114,7 @@ defmodule Campfire.Webhooks do
     plain =
       message
       |> Message.plain_text()
-      |> String.replace("@#{bot.name}", "")
+      |> then(&Regex.replace(Mentions.mention_regex(bot.name), &1, ""))
       |> String.trim()
 
     %{

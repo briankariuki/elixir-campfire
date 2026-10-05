@@ -33,6 +33,23 @@ defmodule CampfireWeb.RoomLiveTest do
       refute has_element?(view, "#room_#{room.id}_message_stream[phx-viewport-top]")
     end
 
+    # The stream element is display: contents (no box), so the infinite-scroll hook must measure
+    # a boxed element for its top-overrun check
+    test "points the infinite scroll's overrun check at an existing element", %{
+      conn: conn,
+      room: room
+    } do
+      {:ok, view, html} = live(conn, ~p"/rooms/#{room.id}")
+
+      [target] =
+        html
+        |> LazyHTML.from_document()
+        |> LazyHTML.query("#room_#{room.id}_message_stream")
+        |> LazyHTML.attribute("phx-viewport-overrun-target")
+
+      assert has_element?(view, "#room_#{room.id}_messages > ##{target}")
+    end
+
     test "opens the page around a message and highlights it", %{
       conn: conn,
       user: user,
@@ -88,7 +105,7 @@ defmodule CampfireWeb.RoomLiveTest do
       # LiveViewTest hands the conn to get_connect_info/2, which reads the test adapter's peer data
       conn = Plug.Test.put_peer_data(conn, %{address: {9, 9, 9, 9}, port: 1234, ssl_cert: nil})
 
-      assert {:error, {:redirect, %{to: "/session/new"}}} = live(conn, ~p"/rooms/#{room.id}")
+      assert {:error, {:redirect, %{to: "/blocked"}}} = live(conn, ~p"/rooms/#{room.id}")
     end
   end
 
@@ -206,6 +223,22 @@ defmodule CampfireWeb.RoomLiveTest do
       Chat.destroy_boost!(boost, actor: other)
       assert has_element?(view, "#edit-form-#{message.client_message_id}")
     end
+
+    test "only one edit form is open at a time", %{conn: conn, user: user, room: room} do
+      first = message_fixture(room, user, %{body: "First"})
+      second = message_fixture(room, user, %{body: "Second"})
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      view |> element(message_dom_id(first) <> " .message__edit-btn") |> render_click()
+      view |> element(message_dom_id(second) <> " .message__edit-btn") |> render_click()
+
+      assert has_element?(view, "#edit-form-#{second.client_message_id}")
+      refute has_element?(view, "#edit-form-#{first.client_message_id}")
+      assert has_element?(view, message_dom_id(first), "First")
+
+      render_keydown(view, "cancel_edit", %{"key" => "Escape", "id" => second.id})
+      refute has_element?(view, "form[id^=edit-form-]")
+    end
   end
 
   describe "boosts" do
@@ -253,6 +286,21 @@ defmodule CampfireWeb.RoomLiveTest do
 
       assert has_element?(view, message_dom_id(message), "Boost me please")
       assert has_element?(view, "#boost-form-#{message.client_message_id}")
+    end
+
+    test "only one custom boost form is open at a time", %{conn: conn, other: other, room: room} do
+      first = message_fixture(room, other, %{body: "First"})
+      second = message_fixture(room, other, %{body: "Second"})
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      view |> element(message_dom_id(first) <> " .message__boost-btn") |> render_click()
+      view |> element(message_dom_id(second) <> " .message__boost-btn") |> render_click()
+
+      assert has_element?(view, "#boost-form-#{second.client_message_id}")
+      refute has_element?(view, "#boost-form-#{first.client_message_id}")
+
+      render_keydown(view, "cancel_boost", %{"key" => "Escape", "id" => second.id})
+      refute has_element?(view, "form[id^=boost-form-]")
     end
 
     test "can't delete someone else's boost", %{conn: conn, user: user, other: other, room: room} do

@@ -66,6 +66,20 @@ defmodule Campfire.WebhooksTest do
     refute_received {:webhook, _, _}
   end
 
+  test "an email-like @Name isn't a mention", %{user: user, room: room} do
+    stub_webhook(&Req.Test.text(&1, "nope"))
+    message = message_fixture(room, user, body: "write to ops@Helper.example")
+    assert message.mentioned_user_ids == []
+    refute_received {:webhook, _, _}
+  end
+
+  test "the plain body only drops real mentions of the bot", %{user: user, room: room} do
+    stub_webhook(&Req.Test.text(&1, ""))
+    message_fixture(room, user, body: "@Helper mail ops@Helper.example")
+    assert_received {:webhook, "/helper", payload}
+    assert payload["message"]["body"]["plain"] == "mail ops@Helper.example"
+  end
+
   test "every message in a direct room with the bot is delivered", %{user: user, bot: bot} do
     stub_webhook(&Req.Test.text(&1, "pong"))
     direct = direct_room_fixture(user, [bot])

@@ -29,6 +29,7 @@ defmodule Campfire.Accounts.User do
   }
 
   alias Campfire.Accounts.User.Preparations.{SignInRateLimitKey, VerifyPassword}
+  alias Campfire.Accounts.User.Validations.EmailAddress
 
   rate_limit do
     backend Campfire.Hammer
@@ -113,7 +114,7 @@ defmodule Campfire.Accounts.User do
     read :first_administrator do
       description "The oldest administrator (the help contact on the sign-in pages). No actor needed."
       get? true
-      filter expr(role == :administrator)
+      filter expr(role == :administrator and status == :active)
       prepare build(sort: [id: :asc], limit: 1)
     end
 
@@ -148,6 +149,7 @@ defmodule Campfire.Accounts.User do
       argument :password, :string, allow_nil?: false, sensitive?: true
       change set_attribute(:role, :member)
       change NormalizeEmail
+      validate EmailAddress
       change HashPassword
       change GrantOpenRooms
     end
@@ -158,6 +160,7 @@ defmodule Campfire.Accounts.User do
       argument :password, :string, allow_nil?: false, sensitive?: true
       change set_attribute(:role, :administrator)
       change NormalizeEmail
+      validate EmailAddress
       change HashPassword
       change GrantOpenRooms
     end
@@ -168,6 +171,7 @@ defmodule Campfire.Accounts.User do
       accept [:name, :email_address, :bio, :avatar_key]
       argument :password, :string, sensitive?: true
       change NormalizeEmail
+      validate EmailAddress, where: [changing(:email_address)]
       change HashPassword
       change {Campfire.Changes.DeleteReplacedUpload, attribute: :avatar_key}
     end
@@ -180,6 +184,8 @@ defmodule Campfire.Accounts.User do
       argument :role, :atom, allow_nil?: false
       validate attribute_does_not_equal(:role, :bot), message: "can't be changed for a bot"
       change SetRole
+      # The user's open LiveViews hold the old role; make them reconnect with the new one.
+      change DisconnectSockets
     end
 
     update :deactivate do
@@ -193,6 +199,10 @@ defmodule Campfire.Accounts.User do
 
     update :ban do
       accept []
+      # Before set_attribute, so it checks the stored status.
+      validate attribute_does_not_equal(:status, :deactivated),
+        message: "must not be deactivated"
+
       change set_attribute(:status, :banned)
       # BanSessionIps must run before DestroySessions (it reads the sessions' IPs)
       change BanSessionIps
@@ -215,6 +225,8 @@ defmodule Campfire.Accounts.User do
 
     update :unban do
       accept []
+      # Before set_attribute, so it checks the stored status.
+      validate attribute_equals(:status, :banned), message: "must be banned"
       change set_attribute(:status, :active)
       change DestroyBans
     end
@@ -282,7 +294,8 @@ defmodule Campfire.Accounts.User do
       authorize_if actor_attribute_equals(:role, :administrator)
     end
 
-    policy action([:ban, :deactivate]) do
+    # Administrators can't ban, remove or demote themselves, so the last one can't be lost.
+    policy action([:ban, :deactivate, :change_role]) do
       forbid_if expr(id == ^actor(:id))
       authorize_if always()
     end

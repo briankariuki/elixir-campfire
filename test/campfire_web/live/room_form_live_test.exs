@@ -102,6 +102,30 @@ defmodule CampfireWeb.RoomFormLiveTest do
       assert room_members(room, user) == Enum.sort([user.id, bot.id])
     end
 
+    test "keeps banned members in a closed room", %{conn: conn, user: user, other: other} do
+      room = closed_room_fixture(user, [user, other], "With banned")
+      Campfire.Accounts.ban_user!(other, authorize?: false)
+      bystander_banned = user_fixture(name: "Banned Bystander")
+      Campfire.Accounts.ban_user!(bystander_banned, authorize?: false)
+
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}/edit")
+
+      assert has_element?(view, "#user_#{other.id}[checked]")
+      refute has_element?(view, "#user_#{bystander_banned.id}")
+
+      view |> form("#room-form", %{name: "Renamed"}) |> render_submit()
+
+      assert reload(room).name == "Renamed"
+      assert room_members(room, user) == Enum.sort([user.id, other.id])
+    end
+
+    test "doesn't offer banned people for a new closed room", %{conn: conn, other: other} do
+      Campfire.Accounts.ban_user!(other, authorize?: false)
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+
+      refute has_element?(view, "#user_#{other.id}")
+    end
+
     test "lists bots when converting an open room to closed", %{conn: conn, user: user} do
       bot = bot_fixture(name: "Deploy Bot")
       room = open_room_fixture(user, "Open")

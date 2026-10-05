@@ -112,10 +112,17 @@ defmodule CampfireWeb.UserAuth do
   def on_mount(:ensure_authenticated, _params, session, socket) do
     socket = mount_current_user(socket, session)
 
-    if socket.assigns.current_user && not banned_peer?(socket) do
-      {:cont, socket}
-    else
-      {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/session/new")}
+    cond do
+      is_nil(socket.assigns.current_user) ->
+        {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/session/new")}
+
+      # Not /session/new: it's guests-only and would send a signed-in user straight back here.
+      # /blocked is a plain controller page (no LiveView socket), so this can't loop.
+      banned_peer?(socket) ->
+        {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/blocked")}
+
+      true ->
+        {:cont, socket}
     end
   end
 

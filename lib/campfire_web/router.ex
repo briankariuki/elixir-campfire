@@ -43,6 +43,8 @@ defmodule CampfireWeb.Router do
     get "/session/transfers/:token", SessionTransferController, :show
     put "/session/transfers/:token", SessionTransferController, :update
     get "/account/logo", AccountLogoController, :show
+    # Where LiveViews send a signed-in user whose socket comes from a banned IP (see UserAuth)
+    get "/blocked", BlockedController, :show
   end
 
   ## Signed-in controllers

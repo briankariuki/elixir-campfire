@@ -2,8 +2,9 @@ defmodule Campfire.Chat.Mentions do
   @moduledoc """
   `@Full Name` mentions in message bodies.
 
-  A mention is `@` followed by a room member's exact name, not followed by another letter, digit
-  or underscore. Longer names are matched first, so `@Ann Smith` wins over `@Ann`.
+  A mention is `@` followed by a room member's exact name, neither preceded nor followed by a
+  letter, digit or underscore (so `ops@Deploy.example` doesn't mention "Deploy"). Longer names are
+  matched first, so `@Ann Smith` wins over `@Ann`. Members sharing a name are all mentioned.
   """
 
   require Ash.Query
@@ -16,18 +17,25 @@ defmodule Campfire.Chat.Mentions do
   """
   @spec mentioned_ids(String.t() | nil, [{integer(), String.t()} | map()]) :: [integer()]
   def mentioned_ids(body, members) when is_binary(body) and body != "" do
-    members
-    |> Enum.map(fn
-      {id, name} -> {id, name}
-      %{id: id, name: name} -> {id, name}
-    end)
-    |> Enum.reject(fn {_id, name} -> name in [nil, ""] end)
-    |> Enum.sort_by(fn {_id, name} -> String.length(name) end, :desc)
-    |> Enum.reduce({body, []}, fn {id, name}, {text, ids} ->
+    pairs =
+      members
+      |> Enum.map(fn
+        {id, name} -> {id, name}
+        %{id: id, name: name} -> {id, name}
+      end)
+      |> Enum.reject(fn {_id, name} -> name in [nil, ""] end)
+
+    ids_by_name = Enum.group_by(pairs, fn {_id, name} -> name end, fn {id, _name} -> id end)
+
+    pairs
+    |> Enum.map(fn {_id, name} -> name end)
+    |> Enum.uniq()
+    |> Enum.sort_by(&String.length/1, :desc)
+    |> Enum.reduce({body, []}, fn name, {text, ids} ->
       regex = mention_regex(name)
 
       if Regex.match?(regex, text) do
-        {Regex.replace(regex, text, ""), [id | ids]}
+        {Regex.replace(regex, text, ""), Enum.reverse(Map.fetch!(ids_by_name, name), ids)}
       else
         {text, ids}
       end
@@ -39,9 +47,13 @@ defmodule Campfire.Chat.Mentions do
 
   def mentioned_ids(_body, _members), do: []
 
-  @doc "A regex matching `@name` as a whole mention."
+  @doc """
+  A regex matching `@name` as a whole mention: the `@` must not follow a letter, digit or `_`
+  (e.g. in an email address) and the name must not be followed by one. Both checks are zero-width,
+  so the match is exactly `@name`.
+  """
   def mention_regex(name) do
-    Regex.compile!("@" <> Regex.escape(name) <> "(?![\\p{L}\\p{N}_])", "u")
+    Regex.compile!("(?<![\\p{L}\\p{N}_])@" <> Regex.escape(name) <> "(?![\\p{L}\\p{N}_])", "u")
   end
 
   @doc "The `{id, name}` of every member of the room."

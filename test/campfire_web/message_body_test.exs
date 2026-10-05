@@ -68,6 +68,19 @@ defmodule CampfireWeb.MessageBodyTest do
     assert html("@Annabel", mentioned: [user.id], users: users) =~ "@Annabel"
   end
 
+  test "doesn't highlight @Name inside a word, like an email address" do
+    ann = user_fixture(name: "Ann")
+    opts = [mentioned: [ann.id], users: %{ann.id => ann}]
+
+    assert html("x@Ann", opts) == ~s(<div class="lexxy-content">x@Ann</div>)
+    assert html("mail bob@Ann.com", opts) == ~s(<div class="lexxy-content">mail bob@Ann.com</div>)
+
+    result = html("bob@Ann.com, (@Ann)\n@Ann", opts)
+    assert result =~ ~s(<div class="lexxy-content">bob@Ann.com, (<span class="mention">)
+    assert result =~ ~s[Ann</span>)<br><span class="mention">]
+    assert length(String.split(result, ~s(<span class="mention">))) == 3
+  end
+
   test "emoji_only?/1" do
     assert MessageBody.emoji_only?("🎉🔥")
     assert MessageBody.emoji_only?(" ❤️ 👍🏽 ")

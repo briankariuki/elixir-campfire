@@ -34,7 +34,7 @@ defmodule CampfireWeb.RoomFormLive do
       room: nil,
       name: "New room",
       can_administer?: true,
-      users: list_users(user),
+      users: list_users(user, MapSet.new()),
       selected: MapSet.new([user.id]),
       initially_selected: MapSet.new([user.id])
     )
@@ -62,7 +62,7 @@ defmodule CampfireWeb.RoomFormLive do
            kind: room.kind,
            name: room.name,
            can_administer?: User.can_administer?(user, room),
-           users: list_users(user),
+           users: list_users(user, members),
            selected: members,
            initially_selected: members
          )}
@@ -75,8 +75,14 @@ defmodule CampfireWeb.RoomFormLive do
     end
   end
 
-  # Bots are members too: leaving them out would revoke their access on save
-  defp list_users(user), do: Accounts.list_users!(%{include_bots: true}, actor: user)
+  # Saving a closed room revokes everyone not submitted, so the list must include every member who
+  # can hold access: bots, and banned members (they keep their memberships so an unban restores
+  # their access). Banned people who aren't members aren't offered.
+  defp list_users(user, member_ids) do
+    %{include_bots: true, include_banned: true}
+    |> Accounts.list_users!(actor: user)
+    |> Enum.filter(&(&1.status != :banned or &1.id in member_ids))
+  end
 
   @impl true
   def handle_params(_params, _uri, socket) do
@@ -349,6 +355,7 @@ defmodule CampfireWeb.RoomFormLive do
       </figure>
       <div class="min-width">
         <div class="overflow-ellipsis fill-shade"><strong>{@user.name}</strong></div>
+        <div :if={@user.status == :banned} class="txt-small">Banned</div>
       </div>
       <hr class="separator" aria-hidden="true" />
       {render_slot(@inner_block)}
