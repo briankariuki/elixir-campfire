@@ -44,7 +44,7 @@ Read `docs/PORTING.md` for the product rules; this file only describes the funct
 | Function | Actor | Returns / notes |
 |---|---|---|
 | `register_user(%{name, email_address, password, bio?, avatar_key?})` | no actor | `{:ok, user}` (role `:member`). Joins every open room. The email is trimmed and lowercased; a duplicate email gives `{:error, %Ash.Error.Invalid{}}`. **The caller checks the join code** with `valid_join_code?/1` |
-| `sign_in(email, password)` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. Active non-bot users only (bcrypt; timing-safe when the user doesn't exist) |
+| `sign_in(email, password, %{ip_address: ip})` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. Active non-bot users only (bcrypt; timing-safe when the user doesn't exist). The optional `ip_address` input keys the rate limit (10 calls per 3 minutes, failed or not; keyed on the email when omitted). Over the limit: `{:error, %Ash.Error.Forbidden{errors: [%AshRateLimiter.LimitExceeded{}]}}` (the controller renders 429) |
 | `authenticate_bot(bot_key)` | no actor | `{:ok, %User{}}` or `{:ok, nil}`. The key is `"<id>-<token>"`. Active bots only; `Plug.Crypto.secure_compare`; an empty token is rejected |
 | `get_user(id)` | any user | `{:ok, user}` |
 | `get_user_for_avatar(id)` | no actor | `{:ok, %User{} \| nil}` with only `id, name, role, avatar_key, updated_at` selected. For the public avatar route (an invalid id gives `{:error, _}`) |
@@ -81,7 +81,7 @@ Helpers on `Campfire.Accounts.User`: `initials(user)` ("JF"), `bot_key(user)` (`
 | `destroy_session(session)` | the session's user | `:ok`. Logout; disconnects that user's sockets |
 | `banned_ip?(ip_string)` | no actor | boolean, for the `block_banned_ip` plug (predicate interface; `banned_ip(ip)` gives `{:ok, boolean}`) |
 
-Login flow: `{:ok, %User{} = user} = Accounts.sign_in(email, pw)` →
+Login flow: `{:ok, %User{} = user} = Accounts.sign_in(email, pw, %{ip_address: UserAuth.ip_string(conn)})` →
 `{:ok, session} = Accounts.create_session(%{ip_address: ip, user_agent: ua}, actor: user)` →
 `put_session(conn, :session_token, session.token)` + `put_session(conn, :live_socket_id, "users_socket:#{user.id}")`.
 Request flow: `Accounts.get_session_by_token!(token)` → `session.user`, then `Accounts.touch_session(session, ..., actor: session.user)`.

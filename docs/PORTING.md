@@ -61,7 +61,7 @@ A self-hosted, single-tenant group chat:
 Web Push and VAPID, PWA (manifest and service worker), QR codes, OpenGraph link unfurling, custom CSS, translation popups,
 the browser-version gate, version headers, image thumbnails and video previews (originals are served and sized with CSS),
 the rich-text toolbar, Sentry, `Purchaser`, the `/rooms/:id/refresh` catch-up endpoint and the heartbeat channel
-(a LiveView remount covers both), and login rate limiting.
+(a LiveView remount covers both).
 
 **Involvement levels stay** (`invisible` hides a room from the sidebar). Without push, the other levels have no effect,
 but the bell UI still cycles through them so the data model matches the original.

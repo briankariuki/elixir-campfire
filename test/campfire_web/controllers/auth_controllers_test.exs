@@ -13,6 +13,8 @@ defmodule CampfireWeb.AuthControllersTest do
     }
   end
 
+  defp random_ip, do: {10, :rand.uniform(250), :rand.uniform(250), :rand.uniform(250)}
+
   describe "first run" do
     test "shows the setup form until the account exists", %{conn: conn} do
       html = conn |> get(~p"/first_run") |> html_response(200)
@@ -105,6 +107,32 @@ defmodule CampfireWeb.AuthControllersTest do
       assert html =~ "shake"
       assert html =~ "Too many requests or unauthorized."
       refute get_session(conn, :session_token)
+    end
+
+    test "the 11th attempt from one IP within the window gets 429, other IPs are unaffected", %{
+      conn: conn
+    } do
+      conn = %{conn | remote_ip: random_ip()}
+      wrong = %{"email_address" => "david@example.com", "password" => "x"}
+      right = %{"email_address" => "david@example.com", "password" => "secret123"}
+
+      for _ <- 1..10, do: assert(conn |> post(~p"/session", wrong) |> html_response(401))
+
+      limited = post(conn, ~p"/session", right)
+      assert html_response(limited, 429) =~ "Too many requests or unauthorized."
+      refute get_session(limited, :session_token)
+
+      other = %{conn | remote_ip: random_ip()}
+      assert other |> post(~p"/session", right) |> redirected_to() == ~p"/"
+    end
+
+    test "a successful sign-in doesn't reset the limit", %{conn: conn} do
+      conn = %{conn | remote_ip: random_ip()}
+      right = %{"email_address" => "david@example.com", "password" => "secret123"}
+
+      for _ <- 1..10, do: assert(conn |> post(~p"/session", right) |> redirected_to() == ~p"/")
+
+      assert conn |> post(~p"/session", right) |> html_response(429)
     end
 
     test "signed-in users are sent away from the login page", %{conn: conn, user: user} do

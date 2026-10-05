@@ -152,5 +152,6 @@ defmodule CampfireWeb.UserAuth do
     %{ip_address: ip_string(conn), user_agent: List.first(get_req_header(conn, "user-agent"))}
   end
 
-  defp ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
+  @doc "The client IP of the connection as a string."
+  def ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
 end

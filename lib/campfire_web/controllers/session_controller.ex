@@ -14,20 +14,30 @@ defmodule CampfireWeb.SessionController do
     email = to_string(params["email_address"])
     password = to_string(params["password"])
 
-    case Accounts.sign_in(email, password) do
-      {:ok, %User{} = user} ->
-        UserAuth.log_in_user(conn, user)
-
-      _ ->
-        conn
-        |> put_status(:unauthorized)
-        |> put_flash(:error, "Too many requests or unauthorized.")
-        |> render_form(%{"email_address" => email}, true)
+    case Accounts.sign_in(email, password, %{ip_address: UserAuth.ip_string(conn)}) do
+      {:ok, %User{} = user} -> UserAuth.log_in_user(conn, user)
+      {:error, error} -> render_failure(conn, email, status_for(error))
+      _ -> render_failure(conn, email, :unauthorized)
     end
   end
 
   def delete(conn, _params) do
     UserAuth.log_out_user(conn)
+  end
+
+  defp status_for(%Ash.Error.Forbidden{errors: errors}) do
+    if Enum.any?(errors, &match?(%AshRateLimiter.LimitExceeded{}, &1)),
+      do: :too_many_requests,
+      else: :unauthorized
+  end
+
+  defp status_for(_error), do: :unauthorized
+
+  defp render_failure(conn, email, status) do
+    conn
+    |> put_status(status)
+    |> put_flash(:error, "Too many requests or unauthorized.")
+    |> render_form(%{"email_address" => email}, true)
   end
 
   # Redirects to first run until the account exists.

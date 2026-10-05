@@ -7,7 +7,8 @@ defmodule Campfire.Accounts.User do
     otp_app: :campfire,
     domain: Campfire.Accounts,
     data_layer: AshPostgres.DataLayer,
-    authorizers: [Ash.Policy.Authorizer]
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshRateLimiter]
 
   alias Campfire.Accounts.User.Actions.AuthenticateBot
 
@@ -26,7 +27,17 @@ defmodule Campfire.Accounts.User do
     SetRole
   }
 
-  alias Campfire.Accounts.User.Preparations.VerifyPassword
+  alias Campfire.Accounts.User.Preparations.{SignInRateLimitKey, VerifyPassword}
+
+  rate_limit do
+    backend Campfire.Hammer
+
+    # Original: 10 attempts per 3 minutes per IP. Every call counts, failed or not (no reset on success).
+    action :sign_in,
+      limit: 10,
+      per: :timer.minutes(3),
+      key: &SignInRateLimitKey.key/2
+  end
 
   postgres do
     table "users"
@@ -85,10 +96,13 @@ defmodule Campfire.Accounts.User do
     end
 
     read :sign_in do
-      description "Returns the active, non-bot user with that email and password, or nothing."
+      description "Returns the active, non-bot user with that email and password, or nothing. Rate limited: 10 calls per 3 minutes per `ip_address`."
       get? true
       argument :email_address, :string, allow_nil?: false
       argument :password, :string, allow_nil?: false, sensitive?: true
+
+      argument :ip_address, :string,
+        description: "The client IP the rate limit is keyed on (the email address when nil)."
 
       filter expr(
                email_address == string_downcase(^arg(:email_address)) and status == :active and

@@ -34,6 +34,7 @@ config :spark,
     remove_parens?: true,
     "Ash.Resource": [
       section_order: [
+        :rate_limit,
         :postgres,
         :resource,
         :code_interface,

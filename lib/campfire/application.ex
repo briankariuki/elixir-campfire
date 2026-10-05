@@ -8,6 +8,7 @@ defmodule Campfire.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Campfire.Hammer, [clean_period: 60000]},
       CampfireWeb.Telemetry,
       Campfire.Repo,
       {DNSCluster, query: Application.get_env(:campfire, :dns_cluster_query) || :ignore},

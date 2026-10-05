@@ -82,6 +82,8 @@ defmodule Campfire.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:hammer, "~> 7.0"},
+      {:ash_rate_limiter, "~> 2.0"},
       {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:ash_phoenix, "~> 2.0"},

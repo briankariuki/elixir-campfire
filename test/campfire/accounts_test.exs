@@ -160,6 +160,25 @@ defmodule Campfire.AccountsTest do
       assert {:ok, nil} = Accounts.sign_in("me@example.com", "right")
     end
 
+    test "sign in is rate limited to 10 calls per IP, failed or not" do
+      user = user_fixture(email_address: "limited@example.com", password: "right")
+      ip = "10.#{:rand.uniform(250)}.#{:rand.uniform(250)}.#{:rand.uniform(250)}"
+
+      for _ <- 1..10 do
+        assert {:ok, nil} = Accounts.sign_in("limited@example.com", "wrong", %{ip_address: ip})
+      end
+
+      assert {:error, %Ash.Error.Forbidden{errors: [%AshRateLimiter.LimitExceeded{}]}} =
+               Accounts.sign_in("limited@example.com", "right", %{ip_address: ip})
+
+      # another IP, and callers without an IP (limited per email), are unaffected
+      assert {:ok, %User{id: id}} =
+               Accounts.sign_in("limited@example.com", "right", %{ip_address: "10.0.0.1"})
+
+      assert id == user.id
+      assert {:ok, %User{}} = Accounts.sign_in("limited@example.com", "right")
+    end
+
     test "helpers" do
       user = user_fixture(name: "Jason Fried")
       assert User.initials(user) == "JF"
