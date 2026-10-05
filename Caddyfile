@@ -1,0 +1,7 @@
+# HTTPS for PHX_HOST, proxied to the Campfire release (see docker-compose.yml). Caddy replaces any
+# X-Forwarded-For sent by clients with their real address, which the app trusts
+# (TRUST_PROXY_HEADERS) for sessions, the sign-in rate limit and IP bans.
+{$PHX_HOST} {
+	encode zstd gzip
+	reverse_proxy app:4000
+}

@@ -1,0 +1,72 @@
+/* Phoenix / LiveView specific additions. Keep this file small. */
+
+/* The LiveView container must not become a grid item: the body grid lays out #nav, #main-content
+   and #sidebar directly. */
+body > [data-phx-main],
+body > [data-phx-session] {
+  display: contents;
+}
+
+/* LiveView's form-submit state uses the same "dots" busy indicator as the original [aria-busy] */
+.btn.phx-submit-loading[type="submit"] {
+  position: relative;
+
+  > * {
+    visibility: hidden;
+  }
+
+  &::after {
+    --mask: no-repeat radial-gradient(#000 68%, #0000 71%);
+    --size: 1.25em;
+
+    -webkit-mask: var(--mask), var(--mask), var(--mask);
+    -webkit-mask-size: 28% 45%;
+    mask: var(--mask), var(--mask), var(--mask);
+    mask-size: 28% 45%;
+    animation: submitting 1s infinite linear;
+    aspect-ratio: 8/5;
+    background: currentColor;
+    content: "";
+    inline-size: var(--size);
+    inset: 50%;
+    margin-block: calc((var(--size) / 3) * -1);
+    margin-inline: calc((var(--size) / 2) * -1);
+    position: absolute;
+  }
+}
+
+/* The original removes the flash on animationend; here it stays in the DOM (LiveView owns it),
+   faded out, so it must not catch clicks. Sticky flashes (connection errors) don't fade. */
+.flash {
+  pointer-events: none;
+}
+
+.flash--sticky .flash__inner {
+  animation: none;
+}
+
+.phx-click-loading.btn {
+  cursor: progress;
+}
+
+/* The composer is a plain <textarea> (the original used the Lexxy rich-text editor) */
+.composer__input textarea.input {
+  align-self: center;
+  block-size: 1lh;
+  line-height: 1.4;
+  max-block-size: 10lh;
+  min-block-size: 1lh;
+  overflow-y: auto;
+}
+
+/* base.css strips `appearance` from every input; give plain checkboxes their native look back */
+.input-checkbox {
+  appearance: auto;
+}
+
+/* Field errors under inputs */
+.input-error {
+  color: var(--color-negative);
+  font-size: 0.85em;
+  margin-block-start: var(--block-space-half);
+}

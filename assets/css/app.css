@@ -1,0 +1,37 @@
+/* Campfire's original stylesheets (MIT, basecamp/once-campfire), bundled by esbuild.
+   Plain modern CSS (native nesting, oklch, :has). No Tailwind.
+
+   The original app loaded these alphabetically (Propshaft `stylesheet_link_tag :all`), so the
+   cascade was tuned for that order: reset first, components in the middle and utilities last
+   (so `.pad`, `.unpad`, `.fill-*`, `.txt-*` etc. win over component rules of equal specificity).
+   We keep that order, only hoisting colors (custom properties only) and base up front. */
+
+@import "./campfire/_reset.css";
+@import "./campfire/colors.css";
+@import "./campfire/base.css";
+@import "./campfire/actiontext.css";
+@import "./campfire/animation.css";
+@import "./campfire/autocomplete.css";
+@import "./campfire/avatars.css";
+@import "./campfire/boosts.css";
+@import "./campfire/buttons.css";
+@import "./campfire/code.css";
+@import "./campfire/colorize.css";
+@import "./campfire/composer.css";
+@import "./campfire/embeds.css";
+@import "./campfire/filters.css";
+@import "./campfire/flash.css";
+@import "./campfire/inputs.css";
+@import "./campfire/layout.css";
+@import "./campfire/lightbox.css";
+@import "./campfire/messages.css";
+@import "./campfire/nav.css";
+@import "./campfire/panels.css";
+@import "./campfire/separators.css";
+@import "./campfire/sidebar.css";
+@import "./campfire/signup.css";
+@import "./campfire/spinner.css";
+@import "./campfire/utilities.css";
+
+/* Small additions for the Phoenix/LiveView port */
+@import "./port.css";
