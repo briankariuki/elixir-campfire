@@ -43,3 +43,4 @@ npm-debug.log
 
 # Local Claude Code state
 /.claude/scheduled_tasks.lock
+.DS_Store
