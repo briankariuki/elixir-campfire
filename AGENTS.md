@@ -5,6 +5,15 @@ This is a web application written using the Phoenix web framework.
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
+### Ash guidelines (this project)
+
+- The domain lives in `lib/campfire/**` as two Ash domains (`Campfire.Accounts`, `Campfire.Chat`). The web layer only
+  calls domain code interfaces (`docs/DOMAIN_API.md`), always with `actor: current_user`
+- Read `docs/ASH_REVIEW.md` §3 (do's and don'ts) before changing domain code, and consult the Ash usage rules below
+  (full text in `.claude/skills/ash-framework/`). In short: new behaviour is a new action, no `Ecto.Query`/`Repo` in
+  the domain, changes/validations as modules, `Ash.bulk_*` for set-based work, `require_atomic? false` only with a reason
+- Run `mix ash.codegen --name <change>` after resource changes and `mix usage_rules.sync` after upgrading Ash deps
+
 ### Phoenix v1.8 guidelines
 
 - **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content

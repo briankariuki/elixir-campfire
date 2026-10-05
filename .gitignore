@@ -40,3 +40,6 @@ npm-debug.log
 
 # Uploaded files (Campfire.Uploads) in development.
 /priv/uploads/
+
+# Local Claude Code state
+/.claude/scheduled_tasks.lock
