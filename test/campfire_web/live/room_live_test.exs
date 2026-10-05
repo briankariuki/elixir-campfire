@@ -82,8 +82,11 @@ defmodule CampfireWeb.RoomLiveTest do
 
     test "a banned IP can't connect", %{conn: conn, other: other, room: room} do
       Campfire.Accounts.Ban
-      |> Ash.Changeset.for_create(:create, %{user_id: other.id, ip_address: "127.0.0.1"})
+      |> Ash.Changeset.for_create(:create, %{user_id: other.id, ip_address: "9.9.9.9"})
       |> Ash.create!(authorize?: false)
+
+      # LiveViewTest hands the conn to get_connect_info/2, which reads the test adapter's peer data
+      conn = Plug.Test.put_peer_data(conn, %{address: {9, 9, 9, 9}, port: 1234, ssl_cert: nil})
 
       assert {:error, {:redirect, %{to: "/session/new"}}} = live(conn, ~p"/rooms/#{room.id}")
     end
