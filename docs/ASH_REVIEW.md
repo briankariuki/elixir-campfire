@@ -305,6 +305,18 @@ posts its failure reply and completes the job, so it is posted exactly once. (4)
 `Message` and `User` have a `bypass AshOban.Checks.AshObanInteraction` policy. (5) Attachment deletion still runs
 inline in `DeleteAttachment` (a file delete, not worth a job). Tests use Oban `testing: :inline`; see `docs/DOMAIN_API.md`.
 
+**Status after Phase 4 (`ash_admin`).** Done. AshAdmin is mounted at `/admin` for signed-in administrators only:
+`scope "/"` with `pipe_through [:browser, :require_authenticated_user, :require_admin]` (anonymous goes to `/session/new`,
+members are redirected to `/` with a flash) plus `on_mount: [{CampfireWeb.UserAuth, :ensure_admin}]` on the AshAdmin live
+session, so the websocket re-checks the role. The route is on in every environment, not only `dev_routes` as the
+installer generated it. Both domains have `admin do show? true end` and `User` has `admin do actor? true end`. AshAdmin
+normally takes its actor from a cookie-driven picker with authorization bypassed; `CampfireWeb.AdminActorPlug`
+(`config :ash_admin, actor_plug: ...`, a compile-time setting) replaces that, so the UI starts as the signed-in admin
+with "Auth enforced" on, and the sidebar toggle can still bypass policies. The actor picker in the UI can switch to
+another `User`; that is acceptable because only administrators reach the page. AshAdmin renders with its own root
+layout and inlined CSS/JS (no Tailwind in our bundles), so neither stylesheet leaks into the other. It pulled in
+`cinder`, `gettext`, `expo` and `phoenix_view`.
+
 A minimal "fully Ash" target for this project is: Phases 1–3 above, plus AshRateLimiter and AshOban. AshAuthentication
 is the one real architectural fork; the review's recommendation is to decide on it before Phase 4, because it changes
 the `Session` model that bans depend on.

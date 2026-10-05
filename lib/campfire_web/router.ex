@@ -2,6 +2,7 @@ defmodule CampfireWeb.Router do
   use CampfireWeb, :router
 
   import CampfireWeb.UserAuth
+  import AshAdmin.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -87,6 +88,15 @@ defmodule CampfireWeb.Router do
       live "/bots/new", BotsLive, :new
       live "/bots/:id/edit", BotsLive, :edit
     end
+  end
+
+  ## AshAdmin ops UI (administrators only; the actor is the signed-in admin, see CampfireWeb.AdminActorPlug)
+  scope "/" do
+    pipe_through [:browser, :require_authenticated_user, :require_admin]
+
+    ash_admin "/admin",
+      on_mount: [{CampfireWeb.UserAuth, :ensure_admin}],
+      live_session_name: :ash_admin
   end
 
   ## Bot API (B1)

@@ -8,7 +8,7 @@ defmodule Campfire.Accounts.User do
     domain: Campfire.Accounts,
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshRateLimiter, AshOban]
+    extensions: [AshRateLimiter, AshOban, AshAdmin.Resource]
 
   alias Campfire.Accounts.User.Actions.AuthenticateBot
 
@@ -38,6 +38,10 @@ defmodule Campfire.Accounts.User do
       limit: 10,
       per: :timer.minutes(3),
       key: &SignInRateLimitKey.key/2
+  end
+
+  admin do
+    actor? true
   end
 
   postgres do

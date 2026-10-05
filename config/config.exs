@@ -46,6 +46,7 @@ config :spark,
     "Ash.Resource": [
       section_order: [
         :rate_limit,
+        :admin,
         :postgres,
         :resource,
         :code_interface,
@@ -63,8 +64,13 @@ config :spark,
         :identities
       ]
     ],
-    "Ash.Domain": [section_order: [:resources, :policies, :authorization, :domain, :execution]]
+    "Ash.Domain": [
+      section_order: [:admin, :resources, :policies, :authorization, :domain, :execution]
+    ]
   ]
+
+# AshAdmin acts as the signed-in administrator (see CampfireWeb.AdminActorPlug)
+config :ash_admin, actor_plug: CampfireWeb.AdminActorPlug
 
 config :campfire,
   ecto_repos: [Campfire.Repo],

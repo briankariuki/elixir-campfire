@@ -6,9 +6,13 @@ defmodule Campfire.Accounts do
   interface for a resource action.
   """
 
-  use Ash.Domain, otp_app: :campfire
+  use Ash.Domain, otp_app: :campfire, extensions: [AshAdmin.Domain]
 
   alias Campfire.Accounts.{Account, Ban, Session, User}
+
+  admin do
+    show? true
+  end
 
   resources do
     resource Account do

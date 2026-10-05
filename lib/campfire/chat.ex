@@ -5,11 +5,15 @@ defmodule Campfire.Chat do
   See docs/DOMAIN_API.md for the full list of functions.
   """
 
-  use Ash.Domain, otp_app: :campfire
+  use Ash.Domain, otp_app: :campfire, extensions: [AshAdmin.Domain]
 
   require Ash.Query
 
   alias Campfire.Chat.{Boost, Membership, Message, Room, Search}
+
+  admin do
+    show? true
+  end
 
   resources do
     resource Room do

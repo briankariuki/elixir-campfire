@@ -38,6 +38,20 @@ defmodule CampfireWeb.UserAuth do
     end
   end
 
+  @doc "Redirects signed-in non-administrators to `/` with an error flash (run after `require_authenticated_user`)."
+  def require_admin(conn, _opts) do
+    case conn.assigns[:current_user] do
+      %{role: :administrator} ->
+        conn
+
+      _ ->
+        conn
+        |> put_flash(:error, "You must be an administrator.")
+        |> redirect(to: ~p"/")
+        |> halt()
+    end
+  end
+
   @doc "Sends signed-in users to `/` (for the login and join pages)."
   def redirect_if_user_is_authenticated(conn, _opts) do
     if conn.assigns[:current_user] do

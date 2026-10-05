@@ -3,6 +3,7 @@
     :ash_rate_limiter,
     :ash_oban,
     :oban,
+    :ash_admin,
     :ash_phoenix,
     :ash_postgres,
     :ash,

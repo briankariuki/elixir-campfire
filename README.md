@@ -19,6 +19,8 @@ mix phx.server     # http://localhost:4000
 The first visit goes to the setup page, which creates the account, the first administrator and the "All Talk" room.
 Invite others with the join link on the account page (`/account`).
 
+Admins can inspect data at `/admin` (AshAdmin, signed in as an administrator).
+
 Uploaded files are stored on disk in `priv/uploads` (set `UPLOADS_DIR` in production).
 
 ## Bots

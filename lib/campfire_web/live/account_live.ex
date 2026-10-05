@@ -148,6 +148,7 @@ defmodule CampfireWeb.AccountLive do
         <.back_button />
         <div :if={@admin?} class="flex align-center gap flex-item-justify-end">
           <.icon_button icon="bot" label="Set up chat bots" navigate={~p"/account/bots"} />
+          <.icon_button icon="settings" label="Admin data console" href={~p"/admin"} />
         </div>
       </:nav>
 
