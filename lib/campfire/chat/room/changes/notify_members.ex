@@ -1,7 +1,7 @@
 defmodule Campfire.Chat.Room.Changes.NotifyMembers do
   @moduledoc """
-  After commit: tells the room's members to refresh their sidebar. Users removed from a closed
-  room are notified by the `:revoke` action, not here.
+  After commit: tells the room's members to refresh their sidebar, and tells users removed by
+  `ReviseMembers` (see `:revoked_user_ids` metadata) that the room is gone for them.
   """
 
   use Ash.Resource.Change
@@ -14,6 +14,10 @@ defmodule Campfire.Chat.Room.Changes.NotifyMembers do
     Ash.Changeset.after_transaction(changeset, fn
       _changeset, {:ok, room} ->
         Broadcast.users(Membership.member_ids(room.id), :sidebar_changed)
+
+        revoked = Ash.Resource.get_metadata(room, :revoked_user_ids) || []
+        Broadcast.users(revoked, {:room_removed, room.id})
+        Broadcast.users(revoked, :sidebar_changed)
         {:ok, room}
 
       _changeset, error ->

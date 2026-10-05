@@ -1,7 +1,7 @@
 defmodule Campfire.Checks.RoomMember do
   @moduledoc """
   For creates: the actor is a member of the room being written to. The room is taken from the
-  changeset's `room_id` attribute (messages) or from the `:message` argument (boosts).
+  changeset's `room_id` attribute (messages) or looked up from its `message_id` (boosts).
   """
 
   use Ash.Policy.SimpleCheck
@@ -34,10 +34,21 @@ defmodule Campfire.Checks.RoomMember do
     Ash.Changeset.get_attribute(changeset, :room_id)
   end
 
+  # Look the room up by message id rather than trusting the struct in the `:message` argument.
   defp room_id(%{resource: Boost} = changeset) do
-    case Ash.Changeset.get_argument(changeset, :message) do
-      %{room_id: room_id} -> room_id
-      _ -> nil
+    case Ash.Changeset.get_attribute(changeset, :message_id) do
+      nil ->
+        nil
+
+      message_id ->
+        Message
+        |> Ash.Query.filter(id == ^message_id)
+        |> Ash.Query.select([:room_id])
+        |> Ash.read_one!(authorize?: false)
+        |> case do
+          %{room_id: room_id} -> room_id
+          nil -> nil
+        end
     end
   end
 end

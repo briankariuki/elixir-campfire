@@ -1,7 +1,6 @@
 defmodule Campfire.Chat.Room.Changes.ReviseMembers do
   @moduledoc """
-  Closed rooms: grants the `user_ids` argument and revokes everyone else. Revoked users are
-  notified by `Membership`'s `:revoke` action.
+  Closed rooms: grants the `user_ids` argument and revokes everyone else.
   """
 
   use Ash.Resource.Change
@@ -13,9 +12,11 @@ defmodule Campfire.Chat.Room.Changes.ReviseMembers do
   def change(changeset, _opts, _context) do
     Changeset.after_action(changeset, fn changeset, room ->
       wanted = Room.existing_user_ids(Changeset.get_argument(changeset, :user_ids) || [])
-      Membership.revoke(room.id, Membership.member_ids(room.id) -- wanted)
+      revoked = Membership.revoke(room.id, Membership.member_ids(room.id) -- wanted)
       Membership.grant(room, wanted)
-      {:ok, room}
+      # Revoked users are also told after the outer commit (NotifyMembers): the :revoke action's
+      # own broadcast runs inside this transaction, so a sidebar reload could still see the room.
+      {:ok, Ash.Resource.put_metadata(room, :revoked_user_ids, revoked)}
     end)
   end
 end
