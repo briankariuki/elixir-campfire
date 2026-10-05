@@ -70,3 +70,38 @@ body > [data-phx-session] {
   font-size: 0.85em;
   margin-block-start: var(--block-space-half);
 }
+
+/* Composer: @ mention menu (Composer hook). Reuses .autocomplete__list/.autocomplete__btn from
+   autocomplete.css; opens above the composer. */
+.composer__mentions {
+  box-shadow: 0 0.2em 0.8em rgb(0 0 0 / 0.15);
+  inset-block-end: 100%;
+  inset-inline-start: 4rem;
+  max-block-size: 16em;
+}
+
+.composer__mentions[hidden] {
+  display: none;
+}
+
+.composer__mentions .autocomplete__btn {
+  inline-size: 100%;
+  justify-content: flex-start;
+  text-align: start;
+}
+
+.composer__mentions .autocomplete__btn[aria-selected="true"] {
+  background-color: var(--color-text);
+  box-shadow: none;
+  color: var(--color-text-reversed);
+}
+
+/* Composer: disabled while the socket has been offline for a few seconds (Composer hook) */
+.composer__input:has(textarea:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.composer__input textarea:disabled {
+  cursor: not-allowed;
+}

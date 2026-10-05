@@ -7,7 +7,7 @@ defmodule CampfireWeb.RoomLive do
 
   alias Campfire.{Accounts, Broadcast, Chat, Presence, Uploads}
   alias Campfire.Chat.Message
-  alias CampfireWeb.{MessageComponents, Sidebar}
+  alias CampfireWeb.{MessageComponents, RoomComponents, Sidebar}
 
   on_mount Sidebar
 
@@ -61,12 +61,12 @@ defmodule CampfireWeb.RoomLive do
       current_room_id: room.id,
       users: Map.new(room.users, &{&1.id, &1}),
       page_title: Sidebar.room_name(room, user),
-      body_class: "sidebar",
       typing: %{},
       present?: false,
       editing_id: nil,
       boosting_id: nil
     )
+    |> assign(RoomComponents.room_assigns(room, user))
     |> allow_upload(:attachments,
       accept: :any,
       max_entries: 10,
@@ -254,6 +254,18 @@ defmodule CampfireWeb.RoomLive do
     {:noreply, socket}
   end
 
+  # The composer lost focus or was emptied
+  def handle_event("stop_typing", _params, socket) do
+    broadcast_typing(socket, :stop)
+    {:noreply, socket}
+  end
+
+  # `@` autocomplete in the composer (Composer hook): the room's members matching what was typed
+  # after the `@`. Only members of this room are offered, and only to a member of it.
+  def handle_event("mention_search", %{"query" => query}, socket) when is_binary(query) do
+    {:reply, %{users: mention_matches(socket, query)}, socket}
+  end
+
   def handle_event("send", params, socket) do
     body = params |> Map.get("body", "") |> String.trim_trailing()
 
@@ -291,13 +303,8 @@ defmodule CampfireWeb.RoomLive do
 
   def handle_event("reply", %{"id" => id}, socket) do
     with_message(socket, id, fn message ->
-      quoted =
-        message.body
-        |> String.split(~r/\r?\n/)
-        |> Enum.reject(&String.starts_with?(&1, ">"))
-        |> Enum.map_join("\n", &"> #{&1}")
-
-      push_event(socket, "composer:insert", %{text: quoted <> "\n"})
+      # "> quote\n— Author /rooms/1/@123\n\n" (rendered as blockquote + cite by MessageBody)
+      push_event(socket, "composer:insert", %{text: CampfireWeb.MessageBody.reply_text(message)})
     end)
   end
 
@@ -559,6 +566,25 @@ defmodule CampfireWeb.RoomLive do
 
   defp stop_typing(socket, user_id), do: update(socket, :typing, &Map.delete(&1, user_id))
 
+  @mention_limit 8
+
+  # Members whose name, or any word of it, starts with `query` (case-insensitive), by name
+  defp mention_matches(%{assigns: %{membership: nil}}, _query), do: []
+
+  defp mention_matches(socket, query) do
+    query = query |> String.slice(0, 50) |> String.trim_leading() |> String.downcase()
+
+    socket.assigns.users
+    |> Map.values()
+    |> Enum.filter(fn user ->
+      name = String.downcase(user.name)
+      String.starts_with?(name, query) or String.contains?(name, " " <> query)
+    end)
+    |> Enum.sort_by(&{String.downcase(&1.name), &1.id})
+    |> Enum.take(@mention_limit)
+    |> Enum.map(&%{id: &1.id, name: &1.name, avatar: CampfireWeb.Paths.avatar_path(&1)})
+  end
+
   defp next_involvement(room, current) do
     order = if room.kind == :direct, do: @direct_involvements, else: @shared_involvements
     index = Enum.find_index(order, &(&1 == current)) || -1
@@ -581,6 +607,8 @@ defmodule CampfireWeb.RoomLive do
     ~H"""
     <Layouts.app flash={@flash} current_user={@current_user}>
       <:nav>
+        <RoomComponents.nav_logo account={@account} />
+
         <span class="btn btn--reversed btn--faux room--current">
           <h1 class="room__contents txt-medium overflow-ellipsis">
             <span :if={@room.kind == :direct} class="for-screen-reader">Ping with</span>
@@ -633,6 +661,19 @@ defmodule CampfireWeb.RoomLive do
             aria-hidden="true"
           >
           </div>
+          <RoomComponents.system_welcome
+            :if={
+              RoomComponents.show_welcome?(
+                @original_room?,
+                @account,
+                @more_older?,
+                @more_newer?,
+                @loaded_ids
+              )
+            }
+            account={@account}
+            invite_url={@invite_url}
+          />
           <div id={"room_#{@room.id}_message_stream"} phx-update="stream" style="display: contents">
             <MessageComponents.message
               :for={{dom_id, message} <- @streams.messages}
@@ -654,7 +695,7 @@ defmodule CampfireWeb.RoomLive do
       <div id="visibility" phx-hook="Visibility" hidden></div>
 
       <:footer>
-        <.composer uploads={@uploads} typing={typing_names(@typing)} />
+        <.composer room_id={@room.id} uploads={@uploads} typing={typing_names(@typing)} />
       </:footer>
 
       <:sidebar>
@@ -670,6 +711,7 @@ defmodule CampfireWeb.RoomLive do
 
   attr :uploads, :map, required: true
   attr :typing, :string, default: ""
+  attr :room_id, :integer, required: true
 
   defp composer(assigns) do
     ~H"""
@@ -738,6 +780,8 @@ defmodule CampfireWeb.RoomLive do
                     placeholder="Write a message…"
                     phx-hook="Composer"
                     phx-debounce="blur"
+                    data-room-id={@room_id}
+                    data-mention-menu="composer-mentions"
                   ></textarea>
                 </div>
 
@@ -769,6 +813,17 @@ defmodule CampfireWeb.RoomLive do
           <div class="typing-indicator__author spinner">{@typing}</div>
         </div>
       </form>
+
+      <%!-- The @ mention menu, filled in by the Composer hook (so LiveView leaves it alone) --%>
+      <div
+        id="composer-mentions"
+        class="autocomplete__list composer__mentions"
+        role="listbox"
+        aria-label="Mention a member"
+        phx-update="ignore"
+        hidden
+      >
+      </div>
     </div>
     """
   end

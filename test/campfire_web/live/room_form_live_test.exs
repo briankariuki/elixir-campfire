@@ -190,4 +190,70 @@ defmodule CampfireWeb.RoomFormLiveTest do
       assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, ~p"/rooms/#{room.id}/edit")
     end
   end
+
+  describe "member filter" do
+    test "is shown only when there are more than 20 people", %{conn: conn, user: user} do
+      # The signed-in user and "Other Person" make 2; 18 more makes exactly 20
+      for _ <- 1..18, do: user_fixture()
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+      refute has_element?(view, "#member-filter")
+      assert has_element?(view, "#room-members[phx-hook=Filter]")
+
+      user_fixture(name: "Twenty First")
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+      assert has_element?(view, "input#member-filter[type=search][placeholder='Filter…']")
+
+      assert Enum.count(Campfire.Accounts.list_users!(actor: user)) == 21
+    end
+
+    test "rows carry the lowercased name to match and every checkbox stays in the form", %{
+      conn: conn,
+      user: user,
+      other: other
+    } do
+      for i <- 1..20, do: user_fixture(name: "Member #{i}")
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+
+      assert has_element?(view, "[data-filter-list] li[data-value='other person']")
+
+      # Everyone else has a switch (the creator is a locked hidden field), none removed by the filter
+      users = Campfire.Accounts.list_users!(actor: user)
+      assert length(users) == 22
+
+      for member <- users, member.id != user.id do
+        assert has_element?(view, "#user_#{member.id}[name='user_ids[]']")
+      end
+
+      assert has_element?(view, ~s(input[type=hidden][name="user_ids[]"][value="#{user.id}"]))
+
+      # Saving still submits the checked members, whichever rows a filter would hide
+      third = Campfire.Accounts.list_users!(actor: user) |> Enum.find(&(&1.name == "Member 7"))
+
+      view
+      |> form("#room-form", %{
+        name: "Filtered",
+        user_ids: Enum.map([user, other, third], &to_string(&1.id))
+      })
+      |> render_submit()
+
+      [room] = Enum.filter(Chat.list_rooms!(actor: user), &(&1.name == "Filtered"))
+      assert room_members(room, user) == Enum.sort([user.id, other.id, third.id])
+    end
+
+    test "also filters the member list when editing a closed room", %{
+      conn: conn,
+      user: user,
+      other: other
+    } do
+      others = for i <- 1..20, do: user_fixture(name: "Member #{i}")
+      room = closed_room_fixture(user, [user, other | Enum.take(others, 3)], "Secret")
+
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}/edit")
+      assert has_element?(view, "#member-filter")
+
+      for member <- others ++ [other] do
+        assert has_element?(view, "#user_#{member.id}")
+      end
+    end
+  end
 end

@@ -80,6 +80,10 @@ config :campfire,
 # Where uploaded files (avatars, logos, attachments) are stored on disk.
 config :campfire, :uploads_dir, Path.expand("../priv/uploads", __DIR__)
 
+# Renders a message's body as HTML for webhook payloads (same as the bot API). Wired here so the
+# domain (Campfire.Webhooks) doesn't depend on the web layer.
+config :campfire, :message_html, {CampfireWeb.MessageBody, :to_html_string}
+
 # Extra Req options for webhook deliveries (tests plug in Req.Test here).
 config :campfire, :webhook_req_options, []
 

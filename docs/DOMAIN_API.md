@@ -224,7 +224,10 @@ bot member in a direct room, otherwise the active bots in `mentioned_user_ids`; 
 `Campfire.Notifiers.Fanout` calls `Campfire.Webhooks.enqueue_for_message/2` after the message commits, which inserts one
 Oban job per eligible bot with a webhook (AshOban trigger `:deliver_webhooks` on `Message`, queue `:webhooks`, 3 attempts,
 run through the update action `Message.deliver_webhooks` with a `bot_id` argument). The job `POST`s the PORTING.md §5 JSON
-(7s timeouts) and posts the reply as that bot with `deliver_webhooks?: false`:
+(7s timeouts) and posts the reply as that bot with `deliver_webhooks?: false`. The payload's `message.body.html` is the
+same HTML as the bot API's `body.html` (`CampfireWeb.MessageBody`: autolinks, blockquotes, cites, mention spans; relative
+URLs; `""` for an attachment). The domain doesn't depend on the web layer: the renderer is configured as
+`config :campfire, :message_html, {CampfireWeb.MessageBody, :to_html_string}` and called as `module.function(message)`:
 
 - a `text/plain` or `text/html` 2xx response with a non-blank body becomes a text message (HTML is stripped to text);
 - any other 2xx response with a body becomes an attachment `attachment.<ext>`;

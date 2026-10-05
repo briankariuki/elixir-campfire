@@ -256,7 +256,7 @@ JSON shapes:
 ```jsonc
 // message
 {"id": 1, "created_at": "2024-01-01T00:00:00Z",
- "body": {"plain_text": "Hello", "html": "<p>Hello</p>"},
+ "body": {"plain_text": "Hello", "html": "<div class=\"lexxy-content\">Hello</div>"},
  "creator": {"id": 2, "name": "Bot", "role": "bot", "avatar_url": "https://host/users/2/avatar"},
  "room": {"id": 3}, "url": "https://host/rooms/3/@1"}
 // boost
@@ -270,9 +270,11 @@ JSON shapes:
 ```json
 {"user":    {"id": 1, "name": "David"},
  "room":    {"id": 3, "name": "Watercooler", "path": "/rooms/3/<bot_key>/messages"},
- "message": {"id": 7, "body": {"html": "<p>…</p>", "plain": "text with '@BotName' removed, trimmed"},
+ "message": {"id": 7, "body": {"html": "<div class=\"lexxy-content\">…</div>", "plain": "text with '@BotName' removed, trimmed"},
              "path": "/rooms/3/@7"}}
 ```
+
+`body.html` is the same HTML as the bot API's message `body.html` (see §6, "Message rendering").
 
 Reply handling:
 - A 2xx response with content type `text/plain` or `text/html` and a non-blank body becomes a text message from the bot.
@@ -351,8 +353,14 @@ Use the original markup and classes (`analysis/03-ui.md` §3):
 Body rendering, in order:
 1. HTML-escape.
 2. Autolink `https?://…` (`target="_blank" rel="noopener"`).
-3. Turn `> ` lines into `<blockquote>`.
-4. Replace each mentioned `@Name` with `<span class="mention">…</span>`.
+3. Turn `> ` lines into `<blockquote>`. A line right after a quote that starts with `— ` is the reply attribution:
+   `<cite>Author <a href="/rooms/1/@123">#</a></cite>` (the `#` link only for a same-site message permalink; any other
+   `— text` is a plain escaped `<cite>`; the CSS adds the "— "). The Reply action pre-fills the composer with
+   `> quoted line(s)\n— Author /rooms/1/@123\n\n` (`MessageBody.reply_text/2`; nested quotes, an earlier attribution
+   and the `@` of mentions are left out; a `/play` message quotes the sound's caption).
+4. Replace each mentioned `@Name` with `<span class="mention"><a class="btn avatar" href="/users/ID"><img …></a> Name</span>`.
+   In a LiveView (`live: true`) the link carries `data-phx-link="redirect"` and `data-phx-link-state="push"`, so it
+   navigates without a reload; bot API and webhook html keep plain links.
 5. Turn newlines into `<br>`.
 6. Wrap in `<div class="lexxy-content">`.
 

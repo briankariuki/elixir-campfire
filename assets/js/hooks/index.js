@@ -5,5 +5,6 @@ import LocalTime from "./local_time"
 import Visibility from "./visibility"
 import Copy from "./copy"
 import Lightbox from "./lightbox"
+import Filter from "./filter"
 
-export default {MessageList, MessagePager, Composer, LocalTime, Visibility, Copy, Lightbox}
+export default {MessageList, MessagePager, Composer, LocalTime, Visibility, Copy, Lightbox, Filter}

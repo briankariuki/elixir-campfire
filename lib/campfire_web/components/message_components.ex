@@ -198,7 +198,7 @@ defmodule CampfireWeb.MessageComponents do
 
   defp presentation(assigns) do
     ~H"""
-    {MessageBody.to_html(@message, @users)}
+    {MessageBody.to_html(@message, @users, live: true)}
     """
   end
 

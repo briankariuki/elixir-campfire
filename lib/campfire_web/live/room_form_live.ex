@@ -16,6 +16,9 @@ defmodule CampfireWeb.RoomFormLive do
 
   on_mount Sidebar
 
+  # The member list gets a filter input when there are more people than this (like the original)
+  @filter_threshold 20
+
   @impl true
   def mount(params, _session, socket) do
     socket = assign(socket, body_class: "sidebar", users: [])
@@ -200,7 +203,12 @@ defmodule CampfireWeb.RoomFormLive do
     {selected, unselected} =
       Enum.split_with(assigns.users, &(&1.id in assigns.initially_selected))
 
-    assigns = assign(assigns, selected_users: selected, unselected_users: unselected)
+    assigns =
+      assign(assigns,
+        selected_users: selected,
+        unselected_users: unselected,
+        filter_threshold: @filter_threshold
+      )
 
     ~H"""
     <section class="panel txt-align-center center margin-block-double">
@@ -226,7 +234,11 @@ defmodule CampfireWeb.RoomFormLive do
         <hr class="margin-block borderless" />
 
         <section class="room-access margin-block pad-inline fill-shade border-radius">
-          <menu class="flex flex-column gap margin-none pad overflow-y constrain-height">
+          <menu
+            id="room-members"
+            class="flex flex-column gap margin-none pad overflow-y constrain-height"
+            phx-hook="Filter"
+          >
             <li :if={@can_administer?} class="flex align-center gap margin-none">
               <figure
                 class="avatar flex-item-no-shrink"
@@ -249,35 +261,50 @@ defmodule CampfireWeb.RoomFormLive do
 
             <hr :if={@can_administer?} class="separator full-width" style="--border-style: solid" />
 
-            <%= if @kind == :open do %>
-              <.member :for={user <- @users} user={user}>
-                <img
-                  :if={@can_administer?}
-                  src={~p"/images/check.svg"}
-                  width="20"
-                  height="20"
-                  class="colorize--black flex-item-no-shrink"
-                  aria-hidden="true"
+            <%!-- Shown like the original, only for long lists. The Filter hook only hides rows (it never
+                 removes them), so every checkbox is still submitted. --%>
+            <input
+              :if={length(@users) > @filter_threshold}
+              type="search"
+              id="member-filter"
+              class="input input--transparent full-width"
+              placeholder="Filter…"
+              autocomplete="off"
+              autocorrect="off"
+              data-1p-ignore="true"
+            />
+
+            <div data-filter-list contents>
+              <%= if @kind == :open do %>
+                <.member :for={user <- @users} user={user}>
+                  <img
+                    :if={@can_administer?}
+                    src={~p"/images/check.svg"}
+                    width="20"
+                    height="20"
+                    class="colorize--black flex-item-no-shrink"
+                    aria-hidden="true"
+                  />
+                </.member>
+              <% else %>
+                <.member :for={user <- @selected_users} user={user}>
+                  <.member_switch
+                    :if={@can_administer?}
+                    user={user}
+                    checked={user.id in @selected}
+                    locked={is_nil(@room) and user.id == @current_user.id}
+                  />
+                </.member>
+                <hr
+                  :if={@selected_users != [] and @unselected_users != []}
+                  class="separator full-width"
+                  style="--border-style: solid"
                 />
-              </.member>
-            <% else %>
-              <.member :for={user <- @selected_users} user={user}>
-                <.member_switch
-                  :if={@can_administer?}
-                  user={user}
-                  checked={user.id in @selected}
-                  locked={is_nil(@room) and user.id == @current_user.id}
-                />
-              </.member>
-              <hr
-                :if={@selected_users != [] and @unselected_users != []}
-                class="separator full-width"
-                style="--border-style: solid"
-              />
-              <.member :for={user <- @unselected_users} user={user}>
-                <.member_switch :if={@can_administer?} user={user} checked={user.id in @selected} />
-              </.member>
-            <% end %>
+                <.member :for={user <- @unselected_users} user={user}>
+                  <.member_switch :if={@can_administer?} user={user} checked={user.id in @selected} />
+                </.member>
+              <% end %>
+            </div>
           </menu>
         </section>
 

@@ -185,7 +185,8 @@ defmodule CampfireWeb.RoomLiveTest do
       {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
 
       view |> element(message_dom_id(message) <> " [aria-label=Reply]") |> render_click()
-      assert_push_event(view, "composer:insert", %{text: "> line one\n> line two\n"})
+      expected = "> line one\n> line two\n— Other Person /rooms/#{room.id}/@#{message.id}\n\n"
+      assert_push_event(view, "composer:insert", %{text: ^expected})
     end
 
     test "shows messages edited and deleted elsewhere", %{
