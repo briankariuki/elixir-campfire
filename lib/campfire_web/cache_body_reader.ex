@@ -8,16 +8,14 @@ defmodule CampfireWeb.CacheBodyReader do
   """
 
   def read_body(conn, opts) do
+    if bot_api?(conn), do: read_and_cache(conn, opts), else: Plug.Conn.read_body(conn, opts)
+  end
+
+  defp read_and_cache(conn, opts) do
     case Plug.Conn.read_body(conn, opts) do
-      {:ok, body, conn} ->
-        conn = cache(conn, body)
-        {:ok, if(bot_api?(conn), do: "", else: body), conn}
-
-      {:more, body, conn} ->
-        {:more, body, cache(conn, body)}
-
-      error ->
-        error
+      {:ok, body, conn} -> {:ok, "", cache(conn, body)}
+      {:more, body, conn} -> {:more, "", cache(conn, body)}
+      error -> error
     end
   end
 
