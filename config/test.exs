@@ -34,3 +34,13 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+config :campfire, :uploads_dir, Path.join(System.tmp_dir!(), "campfire_test_uploads")
+config :campfire, :async_tasks, false
+config :campfire, :webhook_req_options, plug: {Req.Test, Campfire.Webhooks}
+
+# Fast password hashing in tests
+config :bcrypt_elixir, log_rounds: 4
+
+# Actions run inside the SQL sandbox transaction in tests
+config :ash, warn_on_transaction_hooks?: false

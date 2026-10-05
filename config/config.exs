@@ -56,7 +56,18 @@ config :spark,
 
 config :campfire,
   ecto_repos: [Campfire.Repo],
+  ash_domains: [Campfire.Accounts, Campfire.Chat],
   generators: [timestamp_type: :utc_datetime, binary_id: false]
+
+# Where uploaded files (avatars, logos, attachments) are stored on disk.
+config :campfire, :uploads_dir, Path.expand("../priv/uploads", __DIR__)
+
+# Run webhook deliveries and ban cleanup in a Task.Supervisor child.
+# Set to false (as in test) to run them inline in the calling process.
+config :campfire, :async_tasks, true
+
+# Extra Req options for webhook deliveries (tests plug in Req.Test here).
+config :campfire, :webhook_req_options, []
 
 # Configure the endpoint
 config :campfire, CampfireWeb.Endpoint,

@@ -12,6 +12,8 @@ defmodule Campfire.Application do
       Campfire.Repo,
       {DNSCluster, query: Application.get_env(:campfire, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Campfire.PubSub},
+      Campfire.Presence,
+      {Task.Supervisor, name: Campfire.TaskSupervisor},
       # Start a worker by calling: Campfire.Worker.start_link(arg)
       # {Campfire.Worker, arg},
       # Start to serve requests, typically the last entry

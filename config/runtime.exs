@@ -23,6 +23,10 @@ end
 config :campfire, CampfireWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+if uploads_dir = System.get_env("UPLOADS_DIR") do
+  config :campfire, :uploads_dir, uploads_dir
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

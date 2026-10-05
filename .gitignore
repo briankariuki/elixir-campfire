@@ -37,3 +37,6 @@ npm-debug.log
 
 
 /.context/
+
+# Uploaded files (Campfire.Uploads) in development.
+/priv/uploads/
