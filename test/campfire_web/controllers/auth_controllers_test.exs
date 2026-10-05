@@ -60,6 +60,21 @@ defmodule CampfireWeb.AuthControllersTest do
       assert html_response(conn, 422) =~ "Set up Campfire"
       refute Accounts.set_up?()
     end
+
+    test "rejects a missing or invalid email address", %{conn: conn} do
+      for email <- ["", "   ", "nope", "a@b@c", "a b@example.com"] do
+        conn =
+          post(conn, ~p"/first_run", %{
+            "user" => %{"name" => "A", "email_address" => email, "password" => "secret123"}
+          })
+
+        assert html_response(conn, 422) =~ "Email address is"
+      end
+
+      conn = post(conn, ~p"/first_run", %{"user" => %{"name" => "A", "password" => "secret123"}})
+      assert html_response(conn, 422) =~ "Email address is required"
+      refute Accounts.set_up?()
+    end
   end
 
   describe "sign in" do
@@ -183,6 +198,19 @@ defmodule CampfireWeb.AuthControllersTest do
       html = conn |> get(~p"/join/#{account.join_code}") |> html_response(200)
       assert html =~ "nametag"
       assert html =~ account.name
+    end
+
+    test "rejects a missing or invalid email address", %{conn: conn, account: account} do
+      for email <- ["", "   ", "nope", "a@b@c", "a b@example.com"] do
+        conn =
+          post(conn, ~p"/join/#{account.join_code}", %{
+            "user" => %{"name" => "A", "email_address" => email, "password" => "secret123"}
+          })
+
+        assert html_response(conn, 422) =~ "Email address is"
+      end
+
+      refute Enum.any?(Accounts.list_users!(actor: admin_fixture()), &(&1.name == "A"))
     end
 
     test "registers a member, joins open rooms and signs in", %{conn: conn, account: account} do
