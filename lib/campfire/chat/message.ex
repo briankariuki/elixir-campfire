@@ -8,7 +8,8 @@ defmodule Campfire.Chat.Message do
     domain: Campfire.Chat,
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer],
-    notifiers: [Ash.Notifier.PubSub]
+    notifiers: [Ash.Notifier.PubSub],
+    extensions: [AshOban]
 
   require Ash.Query
 
@@ -50,6 +51,26 @@ defmodule Campfire.Chat.Message do
       statement :search_vector_index do
         up "CREATE INDEX messages_search_vector_index ON messages USING GIN (search_vector)"
         down "DROP INDEX messages_search_vector_index"
+      end
+    end
+  end
+
+  # One job per (message, bot): `Campfire.Webhooks.enqueue_for_message/2` enqueues them with
+  # `AshOban.run_trigger/3` after the message commits, so there is no polling scheduler.
+  oban do
+    triggers do
+      trigger :deliver_webhooks do
+        action :deliver_webhooks
+        queue :webhooks
+        scheduler_cron false
+        # A bot that doesn't answer can fail up to 3 times (connection errors); timeouts are
+        # answered with the failure reply and complete the job.
+        max_attempts 3
+        # The job makes an HTTP call: don't hold a row lock and a transaction around it.
+        lock_for_update? false
+        timeout :timer.seconds(30)
+        worker_module_name Campfire.Chat.Message.AshOban.Worker.DeliverWebhooks
+        scheduler_module_name Campfire.Chat.Message.AshOban.Scheduler.DeliverWebhooks
       end
     end
   end
@@ -114,6 +135,19 @@ defmodule Campfire.Chat.Message do
       change Changes.TouchRoomAndLoad
     end
 
+    update :deliver_webhooks do
+      description """
+      Posts the message to one bot's webhook and replies as the bot. Only run by the
+      `:deliver_webhooks` Oban trigger, which supplies the `bot_id` argument.
+      """
+
+      accept []
+      require_atomic? false
+      transaction? false
+      argument :bot_id, :integer, allow_nil?: false
+      change Changes.DeliverWebhook
+    end
+
     destroy :destroy do
       primary? true
       change Changes.DeleteAttachment
@@ -121,6 +155,11 @@ defmodule Campfire.Chat.Message do
   end
 
   policies do
+    # The Oban worker reads the message and runs `:deliver_webhooks` without an actor.
+    bypass AshOban.Checks.AshObanInteraction do
+      authorize_if always()
+    end
+
     policy action_type(:read) do
       authorize_if expr(exists(room.memberships, user_id == ^actor(:id)))
     end

@@ -8,7 +8,7 @@ defmodule Campfire.Accounts.User do
     domain: Campfire.Accounts,
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer],
-    extensions: [AshRateLimiter]
+    extensions: [AshRateLimiter, AshOban]
 
   alias Campfire.Accounts.User.Actions.AuthenticateBot
 
@@ -18,6 +18,7 @@ defmodule Campfire.Accounts.User do
     DestroyBans,
     DestroySessions,
     DisconnectSockets,
+    EnqueueBannedContentRemoval,
     GenerateBotToken,
     GrantOpenRooms,
     HashPassword,
@@ -42,6 +43,23 @@ defmodule Campfire.Accounts.User do
   postgres do
     table "users"
     repo Campfire.Repo
+  end
+
+  # Enqueued by `Changes.EnqueueBannedContentRemoval` after the `:ban` action commits, so there
+  # is no polling scheduler. The `where` stops the job if the user was unbanned meanwhile.
+  oban do
+    triggers do
+      trigger :remove_banned_content do
+        action :remove_banned_content
+        queue :default
+        scheduler_cron false
+        where expr(status == :banned)
+        max_attempts 3
+        lock_for_update? false
+        worker_module_name Campfire.Accounts.User.AshOban.Worker.RemoveBannedContent
+        scheduler_module_name Campfire.Accounts.User.AshOban.Scheduler.RemoveBannedContent
+      end
+    end
   end
 
   actions do
@@ -176,6 +194,18 @@ defmodule Campfire.Accounts.User do
       change BanSessionIps
       change DestroySessions
       change DisconnectSockets
+      change EnqueueBannedContentRemoval
+    end
+
+    update :remove_banned_content do
+      description """
+      Deletes every message by a banned user, broadcasting each deletion. Only run by the
+      `:remove_banned_content` Oban trigger, so it is safe to run again.
+      """
+
+      accept []
+      require_atomic? false
+      transaction? false
       change RemoveBannedContent
     end
 
@@ -212,6 +242,11 @@ defmodule Campfire.Accounts.User do
   end
 
   policies do
+    # The Oban worker reads the user and runs `:remove_banned_content` without an actor.
+    bypass AshOban.Checks.AshObanInteraction do
+      authorize_if always()
+    end
+
     policy action([:sign_in, :authenticate_bot, :register]) do
       authorize_if always()
     end

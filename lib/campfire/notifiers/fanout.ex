@@ -5,7 +5,7 @@ defmodule Campfire.Notifiers.Fanout do
   transaction commits, and sends the messages of docs/PORTING.md §4:
 
     * `Message` create: `{:room_unread, room_id}` to every member of the room, and bot
-      webhooks (unless the `:deliver_webhooks?` argument is false)
+      webhook jobs (unless the `:deliver_webhooks?` argument is false)
     * `Room` create/update: `:sidebar_changed` to the current members (users revoked by
       `ReviseMembers` are told by `Membership`'s own publications)
     * `Room` destroy: `{:room_removed, id}` and `:sidebar_changed` to the members captured
@@ -26,7 +26,7 @@ defmodule Campfire.Notifiers.Fanout do
 
     if Ash.Changeset.get_argument(notification.changeset, :deliver_webhooks?) != false do
       room = Ash.Changeset.get_argument(notification.changeset, :room)
-      Campfire.Webhooks.deliver_for_message(message, room)
+      Campfire.Webhooks.enqueue_for_message(message, room)
     end
 
     :ok

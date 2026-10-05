@@ -14,9 +14,13 @@ defmodule Campfire.Application do
       {DNSCluster, query: Application.get_env(:campfire, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Campfire.PubSub},
       Campfire.Presence,
-      {Task.Supervisor, name: Campfire.TaskSupervisor},
-      # Start a worker by calling: Campfire.Worker.start_link(arg)
-      # {Campfire.Worker, arg},
+      # Background jobs: webhook delivery and ban cleanup (AshOban triggers). After PubSub,
+      # because jobs broadcast.
+      {Oban,
+       AshOban.config(
+         Application.fetch_env!(:campfire, :ash_domains),
+         Application.fetch_env!(:campfire, Oban)
+       )},
       # Start to serve requests, typically the last entry
       CampfireWeb.Endpoint
     ]

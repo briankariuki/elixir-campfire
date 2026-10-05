@@ -48,7 +48,7 @@ A self-hosted, single-tenant group chat:
 | ActiveStorage | Files on local disk under a configurable uploads dir (`Campfire.Uploads`); keys stored in columns |
 | ActionCable channels + Turbo Streams | **Phoenix.PubSub** topics plus LiveView `handle_info` |
 | `memberships.connected_at/connections` presence | **Phoenix.Presence** (`Campfire.Presence`, topic `"presence:room:<id>"`) |
-| Resque jobs (webhook, ban cleanup) | `Task.Supervisor.start_child(Campfire.TaskSupervisor, fn -> ... end)` |
+| Resque jobs (webhook, ban cleanup) | Oban jobs through AshOban triggers (`Message :deliver_webhooks`, `User :remove_banned_content`) |
 | `has_secure_password` | `bcrypt_elixir` (`Bcrypt.hash_pwd_salt/1`, `Bcrypt.verify_pass/2`) |
 | `has_secure_token` sessions + signed cookie | `sessions` table with a random token, stored in the Plug session (`:session_token`) |
 | Signed ids (transfer links) | `Phoenix.Token.sign(CampfireWeb.Endpoint, "transfer", user_id)`, `max_age: 4h` |
@@ -265,7 +265,7 @@ JSON shapes:
  "message": {"id": 1, "url": "https://host/rooms/3/@1"}}
 ```
 
-**Webhook delivery** runs in a `Task.Supervisor` child: `POST url`, JSON, 7s connect/receive timeout.
+**Webhook delivery** runs as an Oban job per bot (AshOban): `POST url`, JSON, 7s connect/receive timeout.
 
 ```json
 {"user":    {"id": 1, "name": "David"},

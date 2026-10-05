@@ -4,8 +4,14 @@ defmodule Campfire.Webhooks do
   (docs/PORTING.md §5).
 
   Eligible bots for a message: in a direct room, every active bot member; otherwise the active
-  bots mentioned in the message. The message's creator is always excluded. Each delivery runs
-  through `Campfire.Async` (a `Campfire.TaskSupervisor` child, or inline in tests).
+  bots mentioned in the message. The message's creator is always excluded.
+
+  Delivery runs as Oban jobs (AshOban trigger `:deliver_webhooks` on `Campfire.Chat.Message`).
+  `enqueue_for_message/2` inserts one job per eligible bot, so a slow bot doesn't delay the
+  others and each can be retried on its own; the job calls `deliver_to_bot/2`. Retries
+  (3 attempts) only happen for connection-level failures. A timeout is answered with the
+  "Failed to respond within 7 seconds" reply and completes the job, so it is posted once; other
+  failed responses are logged and not retried.
 
   Replies are created with `deliver_webhooks?: false`, so bots can't loop.
   """
@@ -15,24 +21,39 @@ defmodule Campfire.Webhooks do
 
   alias Campfire.Accounts.User
   alias Campfire.Chat.Message
-  alias Campfire.{Async, Uploads}
+  alias Campfire.Uploads
 
   @timeout 7_000
   @timeout_reply "Failed to respond within 7 seconds"
 
-  @doc "Delivers the message to every eligible bot's webhook."
-  def deliver_for_message(%Message{} = message, room \\ nil) do
-    # System work after a message was created by someone else: load what the payload needs.
-    message =
-      Ash.load!(message, if(room, do: [:creator], else: [:creator, :room]), authorize?: false)
-
-    room = room || message.room
-
+  @doc """
+  Enqueues a delivery job for every eligible bot's webhook. Call after the message committed.
+  """
+  def enqueue_for_message(%Message{} = message, room) do
     for bot <- eligible_bots(message, room), bot.webhook do
-      Async.run(fn -> deliver(bot, bot.webhook.url, message, room) end)
+      AshOban.run_trigger(message, :deliver_webhooks, action_arguments: %{bot_id: bot.id})
     end
 
     :ok
+  end
+
+  @doc """
+  The body of a delivery job: delivers `message` to the webhook of the bot with `bot_id`.
+
+  Returns `:ok`, or `{:error, exception}` for a failure worth retrying. A bot that was
+  deactivated or lost its webhook since the job was enqueued is skipped.
+  """
+  def deliver_to_bot(%Message{} = message, bot_id) do
+    # System work after a message was created by someone else: load what the payload needs.
+    message = Ash.load!(message, [:creator, :room], authorize?: false)
+
+    case Ash.get(User, bot_id, load: :webhook, authorize?: false, not_found_error?: false) do
+      {:ok, %User{role: :bot, status: :active, webhook: %{url: url}} = bot} ->
+        deliver(bot, url, message, message.room)
+
+      _ ->
+        :ok
+    end
   end
 
   @doc false
@@ -54,7 +75,7 @@ defmodule Campfire.Webhooks do
     |> Ash.read!(authorize?: false)
   end
 
-  @doc "POSTs the payload to `url` and handles the response. Runs synchronously."
+  @doc false
   def deliver(bot, url, message, room) do
     options =
       [
@@ -76,17 +97,15 @@ defmodule Campfire.Webhooks do
       {:error, %Req.TransportError{reason: :timeout}} ->
         reply(bot, room, %{body: @timeout_reply})
 
+      # The request probably never reached the bot (refused, DNS, closed): let Oban retry.
+      {:error, %Req.TransportError{} = error} ->
+        Logger.warning("Webhook for bot #{bot.id} failed: #{Exception.message(error)}")
+        {:error, error}
+
       {:error, error} ->
         Logger.warning("Webhook for bot #{bot.id} failed: #{Exception.message(error)}")
         :ok
     end
-  rescue
-    error ->
-      Logger.error(
-        "Webhook for bot #{bot.id} crashed: " <> Exception.format(:error, error, __STACKTRACE__)
-      )
-
-      :error
   end
 
   @doc "The JSON payload sent to a bot's webhook."
@@ -147,6 +166,7 @@ defmodule Campfire.Webhooks do
     end
   end
 
+  # A failed reply is logged, not retried: retrying would deliver to the bot again.
   defp reply(bot, room, attrs) do
     Message
     |> Ash.Changeset.for_create(
@@ -156,6 +176,14 @@ defmodule Campfire.Webhooks do
       authorize?: false
     )
     |> Ash.create(authorize?: false)
+    |> case do
+      {:ok, _message} ->
+        :ok
+
+      {:error, error} ->
+        Logger.error("Reply for bot #{bot.id} failed: #{Exception.message(error)}")
+        :ok
+    end
   end
 
   defp simple_html(text) do

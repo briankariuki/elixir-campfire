@@ -190,7 +190,7 @@ but the room form would get validation errors and `phx-change` validation for fr
 
 ### 1.12 Things that are fine (don't "fix")
 
-- `Campfire.Presence`, `Campfire.Uploads`, `Campfire.Sound`, `Campfire.Webhooks` HTTP delivery, `Campfire.Async`:
+- `Campfire.Presence`, `Campfire.Uploads`, `Campfire.Sound`, `Campfire.Webhooks` HTTP delivery:
   these are not data; keeping them as plain modules is correct.
 - Policies: every rule in PORTING.md §3 is implemented and tested.
 - `custom_statements` for the `search_vector` generated column: exactly what the AshPostgres rules recommend.
@@ -294,6 +294,16 @@ Install any of them with `mix igniter.install <package>` (Igniter is already a d
 | **`ash_ai` 0.8/1.0** | Tool calling over actions (an MCP server that can post to rooms), structured outputs, vectorized search over messages. A "bot that is an LLM" fits naturally on top of the webhook design. | Optional/fun; not part of the port. |
 | **`cinder` 0.17** | Data table LiveView component with Ash integration; useful for `ash_admin`-style user lists. | Skip. |
 | **`usage_rules` 1.2** | Installed. `AGENTS.md` and `.claude/skills/{ash-framework,phoenix-framework}` are generated; re-run `mix usage_rules.sync` after dep upgrades. | **Done.** |
+
+**Status after Phase 4 (AshOban).** Done for webhooks and ban cleanup; `Campfire.Async`, `Campfire.TaskSupervisor` and
+the `:async_tasks` switch are gone. Deviations from the table text: (1) neither trigger polls (`scheduler_cron false`);
+both are enqueued explicitly with `AshOban.run_trigger/3` after commit, so `:deliver_webhooks` is not "on create" and has
+no `where` (the `User` trigger keeps `where status == :banned`, which also stops the job for an unbanned user).
+(2) Webhooks run one job per bot (`bot_id` action argument, unique per message and bot) rather than one per message, so a
+slow bot doesn't hold up the others. (3) Retries: 3 attempts, but only connection-level failures fail a job; a timeout
+posts its failure reply and completes the job, so it is posted exactly once. (4) The worker runs without an actor, so
+`Message` and `User` have a `bypass AshOban.Checks.AshObanInteraction` policy. (5) Attachment deletion still runs
+inline in `DeleteAttachment` (a file delete, not worth a job). Tests use Oban `testing: :inline`; see `docs/DOMAIN_API.md`.
 
 A minimal "fully Ash" target for this project is: Phases 1–3 above, plus AshRateLimiter and AshOban. AshAuthentication
 is the one real architectural fork; the review's recommendation is to decide on it before Phase 4, because it changes

@@ -57,7 +57,7 @@ Read `docs/PORTING.md` for the product rules; this file only describes the funct
 | `set_last_room(user, room_id)` | the user themself | `{:ok, user}` (`last_room_id`) |
 | `change_role(user, role)` | admin | `role` is `:administrator` (or `"administrator"`); anything else means `:member`. Bots can't be changed (Invalid) |
 | `deactivate_user(user)` | admin, not self | `{:ok, user}`. Deletes non-direct memberships, sessions and searches; status `:deactivated`; email becomes `name-deactivated-<uuid>@host`; disconnects sockets. Also used to "delete" a bot |
-| `ban_user(user)` | admin, not self | `{:ok, user}`. Bans each public session IP (private and loopback IPs are skipped), deletes sessions, status `:banned`, disconnects sockets, then deletes all their messages in the background (each broadcasts `{:message_deleted, m}`) |
+| `ban_user(user)` | admin, not self | `{:ok, user}`. Bans each public session IP (private and loopback IPs are skipped), deletes sessions, status `:banned`, disconnects sockets, then enqueues the Oban job that deletes all their messages (each broadcasts `{:message_deleted, m}`) |
 | `unban_user(user)` | admin | `{:ok, user}`. Deletes the bans; status `:active` (messages aren't restored) |
 | `create_bot(%{name, avatar_key?, webhook_url?})` | admin | `{:ok, bot}` (role `:bot`, 12-char `bot_token`). Joins the open rooms. Creates the webhook when a URL is given (it must be `http(s)://`) |
 | `update_bot(bot, %{name?, avatar_key?, webhook_url?})` | admin | `{:ok, bot}`. An omitted `webhook_url` leaves the webhook unchanged; a nil or blank one **deletes** it; otherwise it is created or updated |
@@ -219,12 +219,16 @@ Keys go into `users.avatar_key`, `accounts.logo_key` and `messages.attachment_ke
 
 Delivery is automatic after `create_message` (unless `deliver_webhooks?: false`). The eligible bots are every active
 bot member in a direct room, otherwise the active bots in `mentioned_user_ids`; the creator is always excluded.
-Each bot with a webhook gets a `POST` with the PORTING.md §5 JSON (7s timeouts) in a `Campfire.TaskSupervisor`
-child. Replies are posted as that bot with `deliver_webhooks?: false`:
+`Campfire.Notifiers.Fanout` calls `Campfire.Webhooks.enqueue_for_message/2` after the message commits, which inserts one
+Oban job per eligible bot with a webhook (AshOban trigger `:deliver_webhooks` on `Message`, queue `:webhooks`, 3 attempts,
+run through the update action `Message.deliver_webhooks` with a `bot_id` argument). The job `POST`s the PORTING.md §5 JSON
+(7s timeouts) and posts the reply as that bot with `deliver_webhooks?: false`:
 
 - a `text/plain` or `text/html` 2xx response with a non-blank body becomes a text message (HTML is stripped to text);
 - any other 2xx response with a body becomes an attachment `attachment.<ext>`;
-- a timeout posts `"Failed to respond within 7 seconds"`.
+- a timeout posts `"Failed to respond within 7 seconds"` and completes the job, so retries never re-post it;
+- a connection-level failure (refused, DNS, closed) fails the job and Oban retries it (3 attempts in total); other
+  non-2xx responses are logged and not retried.
 
 Bot API flow: `{:ok, %User{} = bot} = Accounts.authenticate_bot(params["bot_key"])` (401 on `nil`).
 Then `Chat.get_room(room_id, actor: bot)` (404 on error), then `Chat.create_message(room, %{body: raw_body}, actor: bot)`,
@@ -232,8 +236,15 @@ Then `Chat.get_room(room_id, actor: bot)` (404 on error), then `Chat.create_mess
 (403 on Forbidden), and `Chat.create_boost(message, raw_body, actor: bot)`. Check `message.room_id == room.id` and
 return 404 when they differ.
 
-Config (`config/*.exs`): `:async_tasks` (false in test runs webhooks and ban cleanup inline);
-`:webhook_req_options` (test: `plug: {Req.Test, Campfire.Webhooks}`, so stub with
+Ban cleanup is the same pattern: `User.ban` enqueues (after commit) the `:remove_banned_content` trigger, whose update
+action deletes the user's messages. It only runs for users that are still `:banned` and is safe to run again.
+
+Config (`config/*.exs`): `config :campfire, Oban` (queues `default` and `webhooks`; the pruner and lifeline plugins).
+Both triggers have `scheduler_cron false`: nothing polls, jobs are only enqueued explicitly. In test `Oban` runs with
+`testing: :inline`, so jobs run in the enqueueing process and the webhook/ban tests need no draining. To look at the queue
+or run retries, wrap the test body in `Oban.Testing.with_testing_mode(:manual, fn -> ... end)` with `use AshOban.Test,
+repo: Campfire.Repo` and use `assert_triggered/3` and `Oban.drain_queue(queue: :webhooks, with_scheduled: true)`
+(see `test/campfire/webhooks_test.exs`). `:webhook_req_options` (test: `plug: {Req.Test, Campfire.Webhooks}`, so stub with
 `Req.Test.stub(Campfire.Webhooks, fn conn -> ... end)`).
 
 ## Testing helpers

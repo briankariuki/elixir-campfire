@@ -1,6 +1,8 @@
 [
   import_deps: [
     :ash_rate_limiter,
+    :ash_oban,
+    :oban,
     :ash_phoenix,
     :ash_postgres,
     :ash,

@@ -7,6 +7,17 @@
 # General application configuration
 import Config
 
+config :ash_oban, pro?: false
+
+config :campfire, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  queues: [default: 10, webhooks: 10],
+  lifeline: [rescue_after: {2, :hours}],
+  pruner: [max_age: {1, :day}],
+  repo: Campfire.Repo,
+  cron: [crontab: []]
+
 # These enable behaviors that will become the default in the next major
 # version of Ash. Setting them now opts your application into the new
 # behavior and ensures a seamless upgrade. See the backwards compatibility
@@ -62,10 +73,6 @@ config :campfire,
 
 # Where uploaded files (avatars, logos, attachments) are stored on disk.
 config :campfire, :uploads_dir, Path.expand("../priv/uploads", __DIR__)
-
-# Run webhook deliveries and ban cleanup in a Task.Supervisor child.
-# Set to false (as in test) to run them inline in the calling process.
-config :campfire, :async_tasks, true
 
 # Extra Req options for webhook deliveries (tests plug in Req.Test here).
 config :campfire, :webhook_req_options, []

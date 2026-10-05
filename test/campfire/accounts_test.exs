@@ -1,5 +1,6 @@
 defmodule Campfire.AccountsTest do
   use Campfire.DataCase, async: true
+  use AshOban.Test, repo: Campfire.Repo
 
   import Campfire.Fixtures
 
@@ -369,6 +370,54 @@ defmodule Campfire.AccountsTest do
 
       assert {:ok, %{status: :active}} = Accounts.unban_user(banned, actor: admin)
       refute Accounts.banned_ip?("8.8.4.4")
+    end
+
+    test "removing the messages is an Oban job that can run again" do
+      admin = admin_fixture()
+      user = user_fixture()
+      room = open_room_fixture(admin)
+      message = message_fixture(room, user)
+      Broadcast.subscribe_room(room.id)
+
+      banned =
+        Oban.Testing.with_testing_mode(:manual, fn ->
+          banned = Accounts.ban_user!(user, actor: admin)
+
+          # The ban commits first; the messages go when the job runs.
+          assert_triggered(banned, :remove_banned_content)
+          assert {:ok, _} = Chat.get_message(message.id, actor: admin)
+          refute_received {:message_deleted, _}
+
+          assert %{success: 1, failure: 0} =
+                   Oban.drain_queue(queue: :default, with_scheduled: true)
+
+          banned
+        end)
+
+      assert_received {:message_deleted, %{id: deleted_id}}
+      assert deleted_id == message.id
+      assert {:error, _} = Chat.get_message(message.id, actor: admin)
+
+      # No messages left: running it again is fine.
+      Oban.Testing.with_testing_mode(:manual, fn ->
+        AshOban.run_trigger(banned, :remove_banned_content)
+        assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :default)
+      end)
+    end
+
+    test "the cleanup job does nothing for a user who was unbanned meanwhile" do
+      admin = admin_fixture()
+      user = user_fixture()
+      room = open_room_fixture(admin)
+      message = message_fixture(room, user)
+
+      Oban.Testing.with_testing_mode(:manual, fn ->
+        banned = Accounts.ban_user!(user, actor: admin)
+        Accounts.unban_user!(banned, actor: admin)
+        Oban.drain_queue(queue: :default, with_scheduled: true)
+      end)
+
+      assert {:ok, _} = Chat.get_message(message.id, actor: admin)
     end
 
     test "Ban.create rejects invalid and private IP addresses" do

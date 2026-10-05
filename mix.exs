@@ -84,6 +84,8 @@ defmodule Campfire.MixProject do
     [
       {:hammer, "~> 7.0"},
       {:ash_rate_limiter, "~> 2.0"},
+      {:oban, "~> 2.0"},
+      {:ash_oban, "~> 0.9"},
       {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:ash_phoenix, "~> 2.0"},

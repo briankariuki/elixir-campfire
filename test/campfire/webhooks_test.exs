@@ -1,5 +1,6 @@
 defmodule Campfire.WebhooksTest do
   use Campfire.DataCase, async: true
+  use AshOban.Test, repo: Campfire.Repo
 
   import Campfire.Fixtures
 
@@ -142,5 +143,150 @@ defmodule Campfire.WebhooksTest do
     stub_webhook(&Req.Test.transport_error(&1, :timeout))
     message_fixture(room, user, body: "@Helper slow")
     assert [%{body: "Failed to respond within 7 seconds"}] = bot_messages(room, bot)
+  end
+
+  describe "as Oban jobs" do
+    # Jobs run inline by default (see config/test.exs); these tests hold them back to look at
+    # the queue and to run retries.
+    defp manual(fun), do: Oban.Testing.with_testing_mode(:manual, fun)
+
+    defp drain_webhooks, do: Oban.drain_queue(queue: :webhooks, with_scheduled: true)
+
+    defp bot_args(bot), do: [args: %{action_arguments: %{bot_id: bot.id}}]
+
+    test "mentions enqueue one job per bot and the jobs post the replies", %{
+      user: user,
+      bot: bot,
+      room: room
+    } do
+      other = bot_fixture(name: "Other", webhook_url: "https://bots.example.com/other")
+      stub_webhook(&Req.Test.text(&1, "On it"))
+
+      manual(fn ->
+        message = message_fixture(room, user, body: "@Helper @Other go")
+
+        assert [_] = assert_triggered(message, :deliver_webhooks, bot_args(bot))
+        assert [_] = assert_triggered(message, :deliver_webhooks, bot_args(other))
+        refute_received {:webhook, _, _}
+
+        assert %{success: 2, failure: 0} = drain_webhooks()
+      end)
+
+      assert_received {:webhook, "/helper", _}
+      assert_received {:webhook, "/other", _}
+      assert [%{body: "On it"}] = bot_messages(room, bot)
+      assert [%{body: "On it"}] = bot_messages(room, other)
+    end
+
+    test "no job without an eligible bot", %{user: user, room: room} do
+      manual(fn ->
+        message = message_fixture(room, user, body: "just talking")
+        refute_triggered(message, :deliver_webhooks)
+      end)
+    end
+
+    test "a bot's reply enqueues nothing", %{user: user, bot: bot, room: room} do
+      _other = bot_fixture(name: "Other", webhook_url: "https://bots.example.com/other")
+      stub_webhook(&Req.Test.text(&1, "@Other hello"))
+
+      manual(fn ->
+        message_fixture(room, user, body: "@Helper go")
+        assert %{success: 1} = drain_webhooks()
+        assert %{success: 0, failure: 0} = drain_webhooks()
+      end)
+
+      assert [%{body: "@Other hello"}] = bot_messages(room, bot)
+    end
+
+    test "delivering doesn't touch the message", %{user: user, room: room} do
+      stub_webhook(&Req.Test.text(&1, "hi"))
+
+      manual(fn ->
+        message = message_fixture(room, user, body: "@Helper hello")
+        drain_webhooks()
+
+        reloaded = Chat.get_message!(message.id, actor: user)
+        assert reloaded.body == message.body
+        assert reloaded.updated_at == message.updated_at
+      end)
+    end
+
+    test "a bot deactivated after enqueueing is skipped", %{user: user, bot: bot, room: room} do
+      stub_webhook(&Req.Test.text(&1, "late"))
+
+      manual(fn ->
+        message_fixture(room, user, body: "@Helper hello")
+        Campfire.Accounts.deactivate_user!(bot, actor: admin_fixture())
+        assert %{success: 1} = drain_webhooks()
+      end)
+
+      refute_received {:webhook, _, _}
+      assert bot_messages(room, bot) == []
+    end
+
+    @tag :capture_log
+    test "a timeout posts the failure text once, also when an earlier attempt was retried", %{
+      user: user,
+      bot: bot,
+      room: room
+    } do
+      test_pid = self()
+
+      Req.Test.expect(Campfire.Webhooks, fn conn ->
+        send(test_pid, :refused)
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      Req.Test.expect(Campfire.Webhooks, fn conn ->
+        send(test_pid, :timed_out)
+        Req.Test.transport_error(conn, :timeout)
+      end)
+
+      manual(fn ->
+        message_fixture(room, user, body: "@Helper slow")
+
+        # Attempt 1: connection refused, the job fails and is retried.
+        assert %{failure: 1, success: 0} = drain_webhooks()
+        assert_received :refused
+        assert bot_messages(room, bot) == []
+
+        # Attempt 2: the timeout is answered and completes the job.
+        assert %{success: 1, failure: 0} = drain_webhooks()
+        assert_received :timed_out
+        assert [%{body: "Failed to respond within 7 seconds"}] = bot_messages(room, bot)
+
+        # Nothing is left to retry, so the failure text isn't posted again.
+        assert %{success: 0, failure: 0} = drain_webhooks()
+      end)
+
+      assert [%{body: "Failed to respond within 7 seconds"}] = bot_messages(room, bot)
+    end
+
+    @tag :capture_log
+    test "a timeout completes the job instead of failing it", %{user: user, bot: bot, room: room} do
+      stub_webhook(&Req.Test.transport_error(&1, :timeout))
+
+      manual(fn ->
+        message_fixture(room, user, body: "@Helper slow")
+        assert %{success: 1, failure: 0} = drain_webhooks()
+        assert %{success: 0, failure: 0} = drain_webhooks()
+      end)
+
+      assert [%{body: "Failed to respond within 7 seconds"}] = bot_messages(room, bot)
+    end
+
+    @tag :capture_log
+    test "connection errors are retried up to three attempts", %{user: user, room: room} do
+      stub_webhook(&Req.Test.transport_error(&1, :econnrefused))
+
+      manual(fn ->
+        message_fixture(room, user, body: "@Helper hello")
+
+        assert %{failure: 1} = drain_webhooks()
+        assert %{failure: 1} = drain_webhooks()
+        assert %{discard: 1} = drain_webhooks()
+        assert %{success: 0, failure: 0, discard: 0} = drain_webhooks()
+      end)
+    end
   end
 end

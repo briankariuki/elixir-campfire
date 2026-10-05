@@ -36,7 +36,10 @@ config :phoenix,
   sort_verified_routes_query_params: true
 
 config :campfire, :uploads_dir, Path.join(System.tmp_dir!(), "campfire_test_uploads")
-config :campfire, :async_tasks, false
+
+# Oban runs jobs inline, in the process that enqueues them: webhook deliveries and ban cleanup
+# finish before the action that triggered them returns.
+config :campfire, Oban, testing: :inline
 config :campfire, :webhook_req_options, plug: {Req.Test, Campfire.Webhooks}
 
 # Fast password hashing in tests
