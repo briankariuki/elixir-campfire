@@ -7,6 +7,7 @@
 // - Pushes "typing" to the LiveView at most once per second while typing.
 // - ArrowUp in an empty composer pushes "edit_last".
 // - Handles the server's "composer:reset" push_event: clear, resize and refocus.
+// - Handles "composer:insert" {text}: prepends text (a reply quote) and focuses after it.
 
 const TYPING_INTERVAL_MS = 1000
 
@@ -25,6 +26,14 @@ export default {
       this.el.value = ""
       this.resize()
       this.el.focus()
+    })
+
+    // Reply: prefill the composer with a quote
+    this.handleEvent("composer:insert", ({text}) => {
+      this.el.value = text + this.el.value
+      this.resize()
+      this.el.focus()
+      this.el.setSelectionRange(text.length, text.length)
     })
 
     this.resize()
