@@ -35,4 +35,28 @@ defmodule CampfireWeb.ConnCase do
     Campfire.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
+
+  @doc """
+  Setup helper that creates a member and logs them in.
+
+      setup :register_and_log_in_user
+  """
+  def register_and_log_in_user(%{conn: conn}) do
+    Campfire.Fixtures.account_fixture()
+    user = Campfire.Fixtures.user_fixture()
+    %{conn: log_in_user(conn, user), user: user}
+  end
+
+  @doc "Logs `user` into `conn` with a real `Campfire.Accounts.Session`."
+  def log_in_user(conn, user) do
+    {:ok, session} =
+      Campfire.Accounts.create_session(%{ip_address: "127.0.0.1", user_agent: "test"},
+        actor: user
+      )
+
+    Phoenix.ConnTest.init_test_session(conn,
+      session_token: session.token,
+      live_socket_id: Campfire.Broadcast.socket_id(user.id)
+    )
+  end
 end
