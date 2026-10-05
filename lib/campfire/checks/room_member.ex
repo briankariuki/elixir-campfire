@@ -1,15 +1,14 @@
 defmodule Campfire.Checks.RoomMember do
   @moduledoc """
   For creates: the actor is a member of the room being written to. The room is taken from the
-  changeset's `room_id` attribute (messages) or from its `message_id`'s room (boosts).
+  changeset's `room_id` attribute (messages) or from the `:message` argument (boosts).
   """
 
   use Ash.Policy.SimpleCheck
 
-  import Ecto.Query
+  alias Campfire.Chat.{Boost, Membership, Message}
 
-  alias Campfire.Chat.{Membership, Message}
-  alias Campfire.Repo
+  require Ash.Query
 
   @impl true
   def describe(_opts), do: "actor is a member of the room"
@@ -21,7 +20,11 @@ defmodule Campfire.Checks.RoomMember do
         false
 
       room_id ->
-        Repo.exists?(from m in Membership, where: m.room_id == ^room_id and m.user_id == ^user_id)
+        # The check itself is the authorization, so the lookup must not be policy-filtered
+        # (a non-member could never see the membership rows).
+        Membership
+        |> Ash.Query.filter(room_id == ^room_id and user_id == ^user_id)
+        |> Ash.exists?(authorize?: false)
     end
   end
 
@@ -31,10 +34,10 @@ defmodule Campfire.Checks.RoomMember do
     Ash.Changeset.get_attribute(changeset, :room_id)
   end
 
-  defp room_id(%{resource: Campfire.Chat.Boost} = changeset) do
-    case Ash.Changeset.get_attribute(changeset, :message_id) do
-      nil -> nil
-      message_id -> Repo.one(from m in Message, where: m.id == ^message_id, select: m.room_id)
+  defp room_id(%{resource: Boost} = changeset) do
+    case Ash.Changeset.get_argument(changeset, :message) do
+      %{room_id: room_id} -> room_id
+      _ -> nil
     end
   end
 end

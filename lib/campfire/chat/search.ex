@@ -7,9 +7,9 @@ defmodule Campfire.Chat.Search do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  import Ecto.Query
+  require Ash.Query
 
-  alias Campfire.Repo
+  alias Campfire.Chat.Search.{Actions, Changes}
 
   @keep 10
 
@@ -38,20 +38,16 @@ defmodule Campfire.Chat.Search do
       upsert_identity :unique_user_query
       upsert_fields [:updated_at]
       change relate_actor(:user)
+      change Changes.PruneOld
+    end
 
-      change after_action(fn _changeset, search, _context ->
-               __MODULE__.prune(search.user_id)
-               {:ok, search}
-             end)
+    destroy :destroy do
+      description "Internal: used in bulk by `prune/1` and `clear_for/1`."
     end
 
     action :clear do
       description "Deletes all of the actor's searches."
-
-      run fn _input, context ->
-        __MODULE__.clear_for(context.actor.id)
-        :ok
-      end
+      run Actions.Clear
     end
   end
 
@@ -88,21 +84,30 @@ defmodule Campfire.Chat.Search do
     identity :unique_user_query, [:user_id, :query]
   end
 
+  # `prune/1` and `clear_for/1` are internal housekeeping scoped to one user id, so they run
+  # with `authorize?: false`: the callers (the `:record` and `:clear` actions, user
+  # deactivation) have already decided who may do it.
+
   @doc false
   def prune(user_id) do
     keep =
-      from s in __MODULE__,
-        where: s.user_id == ^user_id,
-        order_by: [desc: s.updated_at, desc: s.id],
-        limit: @keep,
-        select: s.id
+      __MODULE__
+      |> Ash.Query.filter(user_id == ^user_id)
+      |> Ash.Query.sort(updated_at: :desc, id: :desc)
+      |> Ash.Query.limit(@keep)
+      |> Ash.Query.select([:id])
+      |> Ash.read!(authorize?: false)
+      |> Enum.map(& &1.id)
 
-    from(s in __MODULE__, where: s.user_id == ^user_id and s.id not in subquery(keep))
-    |> Repo.delete_all()
+    __MODULE__
+    |> Ash.Query.filter(user_id == ^user_id and id not in ^keep)
+    |> Ash.bulk_destroy!(:destroy, %{}, authorize?: false)
   end
 
   @doc false
   def clear_for(user_id) do
-    Repo.delete_all(from s in __MODULE__, where: s.user_id == ^user_id)
+    __MODULE__
+    |> Ash.Query.filter(user_id == ^user_id)
+    |> Ash.bulk_destroy!(:destroy, %{}, authorize?: false)
   end
 end

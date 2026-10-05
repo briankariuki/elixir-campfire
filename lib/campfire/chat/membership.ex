@@ -2,7 +2,7 @@ defmodule Campfire.Chat.Membership do
   @moduledoc """
   Links a user to a room, with an involvement level and an `unread_at` mark.
 
-  Grants are idempotent bulk inserts (`ON CONFLICT DO NOTHING`), see `grant/3`.
+  Grants are idempotent bulk upserts that keep existing rows, see `grant/3`.
   """
 
   use Ash.Resource,
@@ -11,9 +11,9 @@ defmodule Campfire.Chat.Membership do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  import Ecto.Query
+  require Ash.Query
 
-  alias Campfire.{Broadcast, Repo}
+  alias Campfire.Chat.Changes.BroadcastAfterCommit
   alias Campfire.Chat.Room
 
   postgres do
@@ -46,48 +46,38 @@ defmodule Campfire.Chat.Membership do
       filter expr(user_id == ^actor(:id) and room_id == ^arg(:room_id))
     end
 
+    create :grant do
+      description "Internal: grants a room to a user. Idempotent: an existing membership is kept."
+      accept [:room_id, :user_id, :involvement]
+      upsert? true
+      upsert_identity :unique_room_user
+      # Nothing to update on conflict, so an existing row is left untouched.
+      upsert_fields []
+    end
+
     update :set_involvement do
       require_atomic? false
       accept [:involvement]
-
-      change after_transaction(fn
-               _changeset, {:ok, membership}, _context ->
-                 Broadcast.user(membership.user_id, :sidebar_changed)
-                 {:ok, membership}
-
-               _changeset, error, _context ->
-                 error
-             end)
+      change {BroadcastAfterCommit, topic: :user, event: :sidebar_changed, payload: :none}
     end
 
     update :mark_read do
       require_atomic? false
       accept []
       change set_attribute(:unread_at, nil)
+      change {BroadcastAfterCommit, topic: :user, event: :room_read, payload: :room_id}
+    end
 
-      change after_transaction(fn
-               _changeset, {:ok, membership}, _context ->
-                 Broadcast.user(membership.user_id, {:room_read, membership.room_id})
-                 {:ok, membership}
-
-               _changeset, error, _context ->
-                 error
-             end)
+    update :mark_unread do
+      description "Internal: marks the room unread for members, in bulk (see Message.Changes.AfterCreate)."
+      accept [:unread_at]
     end
 
     destroy :revoke do
       description "Removes a user from a room (admin or room creator)."
       require_atomic? false
-
-      change after_transaction(fn
-               _changeset, {:ok, membership}, _context ->
-                 Broadcast.user(membership.user_id, {:room_removed, membership.room_id})
-                 Broadcast.user(membership.user_id, :sidebar_changed)
-                 {:ok, membership}
-
-               _changeset, error, _context ->
-                 error
-             end)
+      change {BroadcastAfterCommit, topic: :user, event: :room_removed, payload: :room_id}
+      change {BroadcastAfterCommit, topic: :user, event: :sidebar_changed, payload: :none}
     end
   end
 
@@ -140,68 +130,88 @@ defmodule Campfire.Chat.Membership do
     identity :unique_room_user, [:room_id, :user_id]
   end
 
-  ## Internal helpers (no authorization; used by room and user actions)
+  ## Internal helpers
+  #
+  # System work done on behalf of other actions (granting a room to users, cleaning up after a
+  # deactivation), not on behalf of an actor, so these run with `authorize?: false`.
 
   @doc """
   Grants `room` to `user_ids` with the room's default involvement. Idempotent.
   Returns the ids of the users that were newly granted.
   """
   def grant(%{id: _, kind: _} = room, user_ids, involvement \\ nil) do
-    involvement = to_string(involvement || Room.default_involvement(room))
-    now = NaiveDateTime.utc_now()
+    involvement = involvement || Room.default_involvement(room)
 
     rows =
       for user_id <- Enum.uniq(user_ids) do
-        %{
-          room_id: room.id,
-          user_id: user_id,
-          involvement: involvement,
-          inserted_at: now,
-          updated_at: now
-        }
+        %{room_id: room.id, user_id: user_id, involvement: involvement}
       end
 
-    {_count, inserted} =
-      Repo.insert_all("memberships", rows,
-        on_conflict: :nothing,
-        conflict_target: [:room_id, :user_id],
-        returning: [:user_id]
+    # Existing rows come back too (untouched, since `upsert_fields: []`); the `:upsert_action`
+    # metadata tells the inserted ones from the conflicts.
+    %Ash.BulkResult{records: records} =
+      Ash.bulk_create!(rows, __MODULE__, :grant,
+        upsert?: true,
+        upsert_identity: :unique_room_user,
+        upsert_fields: [],
+        return_records?: true,
+        authorize?: false
       )
 
-    Enum.map(inserted, & &1.user_id)
+    for record <- records || [],
+        Ash.Resource.get_metadata(record, :upsert_action) == :insert,
+        do: record.user_id
   end
 
   @doc "Grants every open room to the user (on registration and bot creation)."
   def grant_open_rooms(user_id) do
-    from(r in "rooms", where: r.kind == "open", select: r.id)
-    |> Repo.all()
-    |> Enum.each(&grant(%{id: &1, kind: :open}, [user_id]))
+    Room
+    |> Ash.Query.filter(kind == :open)
+    |> Ash.Query.select([:id, :kind])
+    |> Ash.read!(authorize?: false)
+    |> Enum.each(&grant(&1, [user_id]))
   end
 
-  @doc "Deletes the memberships of `user_ids` in the room. Returns the revoked user ids."
-  def revoke(room_id, user_ids) do
-    {_count, deleted} =
-      from(m in __MODULE__,
-        where: m.room_id == ^room_id and m.user_id in ^user_ids,
-        select: m.user_id
-      )
-      |> Repo.delete_all()
+  @doc """
+  Deletes the memberships of `user_ids` in the room through the `:revoke` action, which
+  notifies each revoked user. Returns the revoked user ids.
+  """
+  def revoke(_room_id, []), do: []
 
-    deleted
+  def revoke(room_id, user_ids) do
+    __MODULE__
+    |> Ash.Query.filter(room_id == ^room_id and user_id in ^user_ids)
+    |> revoke_all()
+    |> Enum.map(& &1.user_id)
   end
 
   @doc "Deletes the user's memberships in open and closed rooms (deactivation)."
   def revoke_all_except_direct(user_id) do
-    direct_room_ids = from(r in "rooms", where: r.kind == "direct", select: r.id)
+    __MODULE__
+    |> Ash.Query.filter(user_id == ^user_id and room.kind != :direct)
+    |> revoke_all()
 
-    from(m in __MODULE__,
-      where: m.user_id == ^user_id and m.room_id not in subquery(direct_room_ids)
-    )
-    |> Repo.delete_all()
+    :ok
   end
 
   @doc "The ids of the room's members."
   def member_ids(room_id) do
-    Repo.all(from m in __MODULE__, where: m.room_id == ^room_id, select: m.user_id)
+    __MODULE__
+    |> Ash.Query.filter(room_id == ^room_id)
+    |> Ash.Query.select([:user_id])
+    |> Ash.read!(authorize?: false)
+    |> Enum.map(& &1.user_id)
+  end
+
+  defp revoke_all(query) do
+    %Ash.BulkResult{records: records} =
+      Ash.bulk_destroy!(query, :revoke, %{},
+        authorize?: false,
+        notify?: true,
+        return_records?: true,
+        strategy: [:stream]
+      )
+
+    records || []
   end
 end

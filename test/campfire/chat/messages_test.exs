@@ -227,6 +227,32 @@ defmodule Campfire.Chat.MessagesTest do
     end
   end
 
+  describe "remove_all_by_creator" do
+    test "destroys each message through the action: broadcast and attachment cleanup", %{
+      room: room,
+      author: author,
+      member: member
+    } do
+      path = Path.join(System.tmp_dir!(), "upload-#{System.unique_integer([:positive])}.txt")
+      File.write!(path, "data")
+      {:ok, key} = Campfire.Uploads.store(path, "notes.txt")
+
+      one = message_fixture(room, author, body: "one")
+      two = message_fixture(room, author, body: "", attachment_key: key, attachment_filename: "n")
+      kept = message_fixture(room, member, body: "kept")
+      Broadcast.subscribe_room(room.id)
+
+      assert :ok = Message.remove_all_by_creator(author.id)
+
+      assert_receive {:message_deleted, %Message{id: first}}
+      assert_receive {:message_deleted, %Message{id: second}}
+      assert Enum.sort([first, second]) == Enum.sort([one.id, two.id])
+      refute_receive {:message_deleted, _}
+      refute Campfire.Uploads.exists?(key)
+      assert {:ok, _} = Chat.get_message(kept.id, actor: member)
+    end
+  end
+
   describe "reading" do
     test "only members can read messages", %{room: room, author: author} do
       message = message_fixture(room, author)

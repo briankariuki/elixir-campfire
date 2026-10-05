@@ -271,5 +271,55 @@ defmodule Campfire.Chat.RoomsTest do
       assert Campfire.Chat.Membership.grant(room, [user.id, user.id]) == []
       assert member_ids(room) == [user.id]
     end
+
+    test "grant returns only the newly granted users and keeps existing rows" do
+      creator = user_fixture()
+      other = user_fixture()
+      room = closed_room_fixture(creator, [creator])
+
+      Chat.set_involvement!(Chat.get_membership!(room.id, actor: creator), :everything,
+        actor: creator
+      )
+
+      assert Campfire.Chat.Membership.grant(room, [creator.id, other.id]) == [other.id]
+      assert involvement(room, creator) == :everything
+      assert involvement(room, other) == :mentions
+    end
+
+    test "bulk revocation tells every revoked user" do
+      creator = user_fixture()
+      one = user_fixture()
+      two = user_fixture()
+      room = closed_room_fixture(creator, [creator, one, two])
+      Broadcast.subscribe_user(one.id)
+      Broadcast.subscribe_user(two.id)
+
+      assert Enum.sort(Campfire.Chat.Membership.revoke(room.id, [one.id, two.id])) ==
+               Enum.sort([one.id, two.id])
+
+      room_id = room.id
+      assert_receive {:room_removed, ^room_id}
+      assert_receive {:room_removed, ^room_id}
+      assert member_ids(room) == [creator.id]
+    end
+
+    test "revoke_all_except_direct keeps direct rooms and tells the user" do
+      user = user_fixture()
+      friend = user_fixture()
+      open = open_room_fixture(user)
+      closed = closed_room_fixture(friend, [friend, user])
+      {:ok, direct} = Chat.find_or_create_direct_room([friend.id], actor: user)
+      Broadcast.subscribe_user(user.id)
+
+      assert :ok = Campfire.Chat.Membership.revoke_all_except_direct(user.id)
+
+      open_id = open.id
+      closed_id = closed.id
+      assert_receive {:room_removed, ^open_id}
+      assert_receive {:room_removed, ^closed_id}
+      assert user.id in member_ids(direct)
+      refute user.id in member_ids(open)
+      refute user.id in member_ids(closed)
+    end
   end
 end

@@ -9,9 +9,13 @@ defmodule Campfire.Chat.Message do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  alias Campfire.Chat.MessageChanges
+  require Ash.Query
+
+  alias Campfire.Chat.Changes.BroadcastAfterCommit
+  alias Campfire.Chat.Message.{Changes, Validations}
 
   @page_size 40
+  @loads [:creator, boosts: [:booster]]
 
   postgres do
     table "messages"
@@ -71,7 +75,7 @@ defmodule Campfire.Chat.Message do
     read :search do
       description "The last 100 messages in the actor's rooms matching the query, ascending."
       argument :query, :string, allow_nil?: false
-      prepare &MessageChanges.prepare_search/2
+      prepare Campfire.Chat.Message.Preparations.SearchTerms
     end
 
     create :create do
@@ -89,27 +93,31 @@ defmodule Campfire.Chat.Message do
       argument :room, :struct, allow_nil?: false, constraints: [instance_of: Campfire.Chat.Room]
       argument :deliver_webhooks?, :boolean, default: true
 
-      change &MessageChanges.set_room/2
+      change Changes.SetRoom
       change relate_actor(:creator)
-      change &MessageChanges.ensure_client_message_id/2
-      validate &MessageChanges.validate_content/2
-      change &MessageChanges.resolve_mentions/2
-      change &MessageChanges.after_create/2
+      change Changes.EnsureClientMessageId
+      validate Validations.HasContent
+      change Changes.ResolveMentions
+      change Changes.TouchRoomAndLoad
+      change Changes.MarkUnread
+      change Changes.NotifyCreated
     end
 
     update :update do
       primary? true
       require_atomic? false
       accept [:body]
-      validate &MessageChanges.validate_content/2
-      change &MessageChanges.resolve_mentions/2
-      change &MessageChanges.after_update/2
+      validate Validations.HasContent
+      change Changes.ResolveMentions
+      change Changes.TouchRoomAndLoad
+      change {BroadcastAfterCommit, topic: :room, event: :message_updated}
     end
 
     destroy :destroy do
       primary? true
       require_atomic? false
-      change &MessageChanges.after_destroy/2
+      change Changes.DeleteAttachment
+      change {BroadcastAfterCommit, topic: :room, event: :message_deleted}
     end
   end
 
@@ -193,6 +201,9 @@ defmodule Campfire.Chat.Message do
   @doc "The page size used by `page`."
   def page_size, do: @page_size
 
+  @doc "What broadcasts and pages load on messages."
+  def loads, do: @loads
+
   @doc "The body, else the attachment filename, else `\"\"`."
   def plain_text(%{body: body}) when is_binary(body) and body != "", do: body
   def plain_text(%{attachment_filename: name}) when is_binary(name), do: name
@@ -216,11 +227,17 @@ defmodule Campfire.Chat.Message do
   Deletes every message by the user, broadcasting each deletion (ban cleanup).
   """
   def remove_all_by_creator(user_id) do
-    require Ash.Query
-
+    # System cleanup after a ban. Streaming runs the `:destroy` action per record, so each
+    # message still deletes its attachment and broadcasts.
     __MODULE__
     |> Ash.Query.filter(creator_id == ^user_id)
-    |> Ash.read!(authorize?: false)
-    |> Enum.each(&Ash.destroy!(&1, authorize?: false))
+    |> Ash.bulk_destroy!(:destroy, %{},
+      authorize?: false,
+      notify?: true,
+      return_errors?: true,
+      strategy: [:stream]
+    )
+
+    :ok
   end
 end

@@ -58,7 +58,8 @@ defmodule Campfire.Chat do
   """
   def count_messages(room_id, opts) do
     Message
+    |> Ash.Query.for_read(:read, %{}, Keyword.take(opts, [:actor, :authorize?, :tenant]))
     |> Ash.Query.filter(room_id == ^room_id)
-    |> Ash.count(opts)
+    |> Ash.count()
   end
 end

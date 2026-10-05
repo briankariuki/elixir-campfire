@@ -7,10 +7,10 @@ defmodule Campfire.Chat.Boost do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  import Ecto.Query
+  require Ash.Query
 
-  alias Ash.Changeset
-  alias Campfire.{Broadcast, Repo}
+  alias Campfire.Chat.Boost.Changes
+  alias Campfire.Chat.Changes.BroadcastAfterCommit
   alias Campfire.Chat.Message
 
   postgres do
@@ -34,41 +34,16 @@ defmodule Campfire.Chat.Boost do
       accept [:content]
       argument :message, :struct, allow_nil?: false, constraints: [instance_of: Message]
 
-      change fn changeset, _context ->
-        case Changeset.get_argument(changeset, :message) do
-          %{id: id} -> Changeset.force_change_attribute(changeset, :message_id, id)
-          _ -> changeset
-        end
-      end
-
+      change Changes.SetMessage
       change relate_actor(:booster)
-
-      change after_action(fn _changeset, boost, _context ->
-               {:ok, Ash.load!(boost, [:booster], authorize?: false)}
-             end)
-
-      change after_transaction(fn
-               _changeset, {:ok, boost}, _context ->
-                 Broadcast.room(room_id(boost), {:boost_created, boost})
-                 {:ok, boost}
-
-               _changeset, error, _context ->
-                 error
-             end)
+      change Changes.LoadBooster
+      change {BroadcastAfterCommit, topic: :room, event: :boost_created}
     end
 
     destroy :destroy do
       primary? true
       require_atomic? false
-
-      change after_transaction(fn
-               _changeset, {:ok, boost}, _context ->
-                 Broadcast.room(room_id(boost), {:boost_deleted, boost})
-                 {:ok, boost}
-
-               _changeset, error, _context ->
-                 error
-             end)
+      change {BroadcastAfterCommit, topic: :room, event: :boost_deleted}
     end
   end
 
@@ -114,6 +89,15 @@ defmodule Campfire.Chat.Boost do
 
   @doc "The id of the room the boost's message is in."
   def room_id(%__MODULE__{message_id: message_id}) do
-    Repo.one(from m in Message, where: m.id == ^message_id, select: m.room_id)
+    # Internal lookup for routing broadcasts, so no policy check. It reads the message rather
+    # than a `room_id` calculation on the boost because it also runs for a just-deleted boost.
+    Message
+    |> Ash.Query.filter(id == ^message_id)
+    |> Ash.Query.select([:room_id])
+    |> Ash.read_one!(authorize?: false)
+    |> case do
+      %{room_id: room_id} -> room_id
+      nil -> nil
+    end
   end
 end

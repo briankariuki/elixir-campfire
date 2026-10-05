@@ -4,87 +4,84 @@ defmodule Campfire.Chat.Pagination do
 
   require Ash.Query
 
-  alias Campfire.Chat.{Message, MessageChanges}
+  alias Campfire.Chat.Message
 
   def run(input, context) do
-    opts = Ash.Context.to_opts(context)
     args = input.arguments
     room_id = args.room_id
 
+    # The actor, tenant and authorization flag live on the base query; every page is derived
+    # from it, so the reads below can't forget them.
     base =
       Message
-      |> Ash.Query.for_read(:read, %{}, opts)
+      |> Ash.Query.for_read(:read, %{}, Ash.Context.to_opts(context))
       |> Ash.Query.filter(room_id == ^room_id)
-      |> Ash.Query.load(MessageChanges.loads())
+      |> Ash.Query.load(Message.loads())
 
     cond do
       id = args[:around] ->
-        case cursor(base, id, opts) do
-          nil ->
-            {:ok, last_page(base, opts)}
-
-          message ->
-            {:ok,
-             page_before(base, message, opts) ++ [message] ++ page_after(base, message, opts)}
+        case cursor(base, id) do
+          nil -> {:ok, last_page(base)}
+          message -> {:ok, page_before(base, message) ++ [message] ++ page_after(base, message)}
         end
 
       id = args[:before] ->
-        {:ok, page_before(base, cursor(base, id, opts) || %{id: id}, opts)}
+        {:ok, page_before(base, cursor(base, id) || %{id: id})}
 
       id = args[:after] ->
-        {:ok, page_after(base, cursor(base, id, opts) || %{id: id}, opts)}
+        {:ok, page_after(base, cursor(base, id) || %{id: id})}
 
       true ->
-        {:ok, last_page(base, opts)}
+        {:ok, last_page(base)}
     end
   end
 
-  defp cursor(base, id, opts) do
+  defp cursor(base, id) do
     base
     |> Ash.Query.filter(id == ^id)
-    |> Ash.read_one!(opts)
+    |> Ash.read_one!()
   end
 
-  defp last_page(base, opts) do
+  defp last_page(base) do
     base
     |> Ash.Query.sort(inserted_at: :desc, id: :desc)
     |> Ash.Query.limit(Message.page_size())
-    |> Ash.read!(opts)
+    |> Ash.read!()
     |> Enum.reverse()
   end
 
-  defp page_before(base, %{inserted_at: at, id: id}, opts) do
+  defp page_before(base, %{inserted_at: at, id: id}) do
     base
     |> Ash.Query.filter(inserted_at < ^at or (inserted_at == ^at and id < ^id))
     |> Ash.Query.sort(inserted_at: :desc, id: :desc)
     |> Ash.Query.limit(Message.page_size())
-    |> Ash.read!(opts)
+    |> Ash.read!()
     |> Enum.reverse()
   end
 
   # The cursor message is gone (deleted, or not in this room): page by id instead
-  defp page_before(base, %{id: id}, opts) do
+  defp page_before(base, %{id: id}) do
     base
     |> Ash.Query.filter(id < ^id)
     |> Ash.Query.sort(id: :desc)
     |> Ash.Query.limit(Message.page_size())
-    |> Ash.read!(opts)
+    |> Ash.read!()
     |> Enum.reverse()
   end
 
-  defp page_after(base, %{inserted_at: at, id: id}, opts) do
+  defp page_after(base, %{inserted_at: at, id: id}) do
     base
     |> Ash.Query.filter(inserted_at > ^at or (inserted_at == ^at and id > ^id))
     |> Ash.Query.sort(inserted_at: :asc, id: :asc)
     |> Ash.Query.limit(Message.page_size())
-    |> Ash.read!(opts)
+    |> Ash.read!()
   end
 
-  defp page_after(base, %{id: id}, opts) do
+  defp page_after(base, %{id: id}) do
     base
     |> Ash.Query.filter(id > ^id)
     |> Ash.Query.sort(id: :asc)
     |> Ash.Query.limit(Message.page_size())
-    |> Ash.read!(opts)
+    |> Ash.read!()
   end
 end

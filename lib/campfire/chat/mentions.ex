@@ -6,9 +6,9 @@ defmodule Campfire.Chat.Mentions do
   or underscore. Longer names are matched first, so `@Ann Smith` wins over `@Ann`.
   """
 
-  import Ecto.Query
+  require Ash.Query
 
-  alias Campfire.Repo
+  alias Campfire.Chat.Membership
 
   @doc """
   The ids of the `members` (`{id, name}` tuples or maps with `:id` and `:name`) mentioned in
@@ -46,12 +46,12 @@ defmodule Campfire.Chat.Mentions do
 
   @doc "The `{id, name}` of every member of the room."
   def room_members(room_id) do
-    Repo.all(
-      from u in "users",
-        join: m in "memberships",
-        on: m.user_id == u.id,
-        where: m.room_id == ^room_id,
-        select: {u.id, u.name}
-    )
+    # Internal lookup while saving a message (the author may only see their own memberships).
+    Membership
+    |> Ash.Query.filter(room_id == ^room_id)
+    |> Ash.Query.select([:user_id])
+    |> Ash.Query.load(user: [:name])
+    |> Ash.read!(authorize?: false)
+    |> Enum.map(&{&1.user_id, &1.user.name})
   end
 end

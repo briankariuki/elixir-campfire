@@ -9,7 +9,10 @@ defmodule Campfire.Chat.Room do
     data_layer: AshPostgres.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  alias Campfire.Chat.RoomChanges
+  require Ash.Query
+
+  alias Campfire.Accounts.User
+  alias Campfire.Chat.Room.{Actions, Changes, Validations}
 
   postgres do
     table "rooms"
@@ -32,8 +35,8 @@ defmodule Campfire.Chat.Room do
       accept [:name]
       change set_attribute(:kind, :open)
       change relate_actor(:creator)
-      change after_action(&RoomChanges.grant_active_users/3)
-      change after_transaction(&RoomChanges.notify_members/3)
+      change Changes.GrantActiveUsers
+      change Changes.NotifyMembers
     end
 
     create :create_closed do
@@ -41,8 +44,8 @@ defmodule Campfire.Chat.Room do
       argument :user_ids, {:array, :integer}, default: []
       change set_attribute(:kind, :closed)
       change relate_actor(:creator)
-      change after_action(&RoomChanges.revise_members/3)
-      change after_transaction(&RoomChanges.notify_members/3)
+      change Changes.ReviseMembers
+      change Changes.NotifyMembers
     end
 
     create :create_direct do
@@ -51,42 +54,48 @@ defmodule Campfire.Chat.Room do
       argument :user_ids, {:array, :integer}, allow_nil?: false
       change set_attribute(:kind, :direct)
       change relate_actor(:creator)
-      change &RoomChanges.set_direct_key/2
-      change after_action(&RoomChanges.grant_direct_users/3)
-      change after_transaction(&RoomChanges.notify_members/3)
+      change Changes.SetDirectKey
+      change Changes.GrantDirectUsers
+      change Changes.NotifyMembers
     end
 
     action :find_or_create_direct, :struct do
       description "Finds the direct room for exactly these users (plus the actor), or creates it."
       constraints instance_of: __MODULE__
       argument :user_ids, {:array, :integer}, allow_nil?: false
-      run &RoomChanges.find_or_create_direct/2
+      run Actions.FindOrCreateDirect
     end
 
     update :update_open do
       require_atomic? false
       accept [:name]
-      validate &RoomChanges.validate_not_direct/2
+      validate Validations.NotDirect
       change set_attribute(:kind, :open)
-      change after_action(&RoomChanges.grant_active_users/3)
-      change after_transaction(&RoomChanges.notify_members/3)
+      change Changes.GrantActiveUsers
+      change Changes.NotifyMembers
     end
 
     update :update_closed do
       require_atomic? false
       accept [:name]
       argument :user_ids, {:array, :integer}, default: []
-      validate &RoomChanges.validate_not_direct/2
+      validate Validations.NotDirect
       change set_attribute(:kind, :closed)
-      change after_action(&RoomChanges.revise_members/3)
-      change after_transaction(&RoomChanges.notify_members/3)
+      change Changes.ReviseMembers
+      change Changes.NotifyMembers
+    end
+
+    update :touch do
+      description "Internal: bumps `updated_at` when a message is created or edited."
+      accept []
+      change atomic_update(:updated_at, expr(now()))
     end
 
     destroy :destroy do
       primary? true
       description "Deletes the room with its memberships, messages, boosts and attachment files."
       require_atomic? false
-      change &RoomChanges.destroy_contents/2
+      change Changes.DestroyContents
     end
   end
 
@@ -160,6 +169,27 @@ defmodule Campfire.Chat.Room do
   @doc "The involvement new memberships get: `:everything` for direct rooms, else `:mentions`."
   def default_involvement(%{kind: :direct}), do: :everything
   def default_involvement(_), do: :mentions
+
+  @doc "The ids of the active users (bots included): who an open room is granted to."
+  def active_user_ids do
+    # Internal lookup for granting memberships, not a user-facing read.
+    User
+    |> Ash.Query.filter(status == :active)
+    |> Ash.Query.select([:id])
+    |> Ash.read!(authorize?: false)
+    |> Enum.map(& &1.id)
+  end
+
+  @doc "Those of `user_ids` that are existing users (unknown ids are dropped)."
+  def existing_user_ids(user_ids) do
+    user_ids = Enum.uniq(user_ids)
+
+    User
+    |> Ash.Query.filter(id in ^user_ids)
+    |> Ash.Query.select([:id])
+    |> Ash.read!(authorize?: false)
+    |> Enum.map(& &1.id)
+  end
 
   @doc "The canonical key of a direct room: the sorted, unique member ids joined with `-`."
   def direct_key(user_ids) do
