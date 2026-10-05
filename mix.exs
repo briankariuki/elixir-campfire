@@ -12,7 +12,48 @@ defmodule Campfire.MixProject do
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
-      consolidate_protocols: Mix.env() != :dev
+      consolidate_protocols: Mix.env() != :dev,
+      usage_rules: usage_rules()
+    ]
+  end
+
+  # `mix usage_rules.sync` keeps AGENTS.md and .claude/skills in step with the deps' usage rules.
+  defp usage_rules do
+    [
+      file: "AGENTS.md",
+      usage_rules: [
+        :usage_rules,
+        "phoenix:elixir",
+        "phoenix:phoenix",
+        "phoenix:html",
+        "phoenix:liveview",
+        :igniter,
+        {:ash, link: :markdown},
+        {:ash_postgres, link: :markdown},
+        {:ash_phoenix, link: :markdown}
+      ],
+      skills: [
+        location: ".claude/skills",
+        build: [
+          "ash-framework": [
+            description:
+              "Use when writing or reviewing Ash code in this project: resources, actions, policies, queries, calculations, AshPostgres migrations and AshPhoenix forms.",
+            usage_rules: [
+              :ash,
+              "ash:all",
+              :ash_postgres,
+              "ash_postgres:all",
+              :ash_phoenix,
+              "ash_phoenix:all"
+            ]
+          ],
+          "phoenix-framework": [
+            description:
+              "Use when working on the Phoenix web layer: controllers, LiveViews, HEEx templates and JS hooks.",
+            usage_rules: ["phoenix:all"]
+          ]
+        ]
+      ]
     ]
   end
 
@@ -41,6 +82,7 @@ defmodule Campfire.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:ash_phoenix, "~> 2.0"},
       {:ash_postgres, "~> 2.0"},
