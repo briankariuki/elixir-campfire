@@ -36,11 +36,14 @@ defmodule Campfire.AccountsTest do
   end
 
   describe "read interfaces for the web layer" do
-    test "list_users_by_ids returns nothing without an actor" do
+    test "list_users_by_ids is public and only exposes rendering fields" do
       user = user_fixture()
       other = user_fixture()
 
-      assert {:ok, []} = Accounts.list_users_by_ids([user.id])
+      assert [%{id: id, name: name, email_address: %Ash.NotLoaded{}}] =
+               Accounts.list_users_by_ids!([user.id])
+
+      assert id == user.id and name == user.name
 
       assert [%{id: id}] = Accounts.list_users_by_ids!([other.id], actor: user)
       assert id == other.id

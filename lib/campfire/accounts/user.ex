@@ -56,9 +56,10 @@ defmodule Campfire.Accounts.User do
     end
 
     read :by_ids do
-      description "The users with the given ids."
+      description "The users with the given ids (names/avatars for rendering mentions; public)."
       argument :ids, {:array, :integer}, allow_nil?: false
       filter expr(id in ^arg(:ids))
+      prepare build(select: [:id, :name, :role, :avatar_key, :updated_at])
     end
 
     read :for_avatar do
@@ -203,12 +204,13 @@ defmodule Campfire.Accounts.User do
       authorize_if always()
     end
 
-    policy action([:read, :people, :by_ids]) do
+    policy action([:read, :people]) do
       authorize_if actor_present()
     end
 
-    # Used before anyone is signed in (avatars, transfer links, the sign-in page).
-    policy action([:for_avatar, :active_by_id, :first_administrator]) do
+    # Used before anyone is signed in (avatars, transfer links, the sign-in page) or without an
+    # actor (rendering mentions).
+    policy action([:by_ids, :for_avatar, :active_by_id, :first_administrator]) do
       authorize_if always()
     end
 
