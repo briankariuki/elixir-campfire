@@ -19,7 +19,7 @@ defmodule CampfireWeb.AttachmentController do
            Chat.get_message(id, actor: conn.assigns.current_user),
          true <- Uploads.exists?(key) do
       content_type = Uploads.normalize_content_type(message.attachment_content_type)
-      inline? = content_type in @inline_types
+      inline? = inline_type?(content_type)
 
       disposition =
         if params["download"] in ["1", "true"] or not inline?,
@@ -40,6 +40,9 @@ defmodule CampfireWeb.AttachmentController do
       _ -> conn |> put_status(:not_found) |> text("Not found")
     end
   end
+
+  @doc "Whether a (normalized) content type is shown inline rather than downloaded."
+  def inline_type?(content_type), do: content_type in @inline_types
 
   defp content_disposition(disposition, message) do
     filename = message.attachment_filename || "attachment"

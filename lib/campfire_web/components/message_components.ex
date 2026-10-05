@@ -202,9 +202,17 @@ defmodule CampfireWeb.MessageComponents do
     """
   end
 
-  defp media_kind("image/" <> _), do: :image
-  defp media_kind("video/" <> _), do: :video
-  defp media_kind(_), do: :other
+  # Only types the attachment controller serves inline can be embedded (e.g. not SVG)
+  defp media_kind(content_type) do
+    content_type = Campfire.Uploads.normalize_content_type(content_type)
+
+    cond do
+      not CampfireWeb.AttachmentController.inline_type?(content_type) -> :other
+      String.starts_with?(content_type, "image/") -> :image
+      String.starts_with?(content_type, "video/") -> :video
+      true -> :other
+    end
+  end
 
   ## Boosts
 

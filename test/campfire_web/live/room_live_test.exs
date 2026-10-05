@@ -290,6 +290,21 @@ defmodule CampfireWeb.RoomLiveTest do
       assert has_element?(view, message_dom_id(notes), "notes.txt")
       assert has_element?(view, ~s(a[href="/attachments/#{notes.id}?download=1"]))
     end
+
+    test "renders SVG attachments as downloads, not images", %{conn: conn, user: user, room: room} do
+      message =
+        message_fixture(room, user, %{
+          body: "",
+          attachment_key: "x.svg",
+          attachment_filename: "logo.svg",
+          attachment_content_type: "image/svg+xml"
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      refute has_element?(view, ~s(img[src="/attachments/#{message.id}"]))
+      assert has_element?(view, ~s(a[href="/attachments/#{message.id}?download=1"]))
+    end
   end
 
   describe "typing" do
