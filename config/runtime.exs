@@ -23,6 +23,12 @@ end
 config :campfire, CampfireWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Sent as the X-Version / X-Rev response headers (CampfireWeb.VersionHeaders), like the original's
+# config/initializers/version.rb: APP_VERSION, else GIT_REVISION, else "0".
+config :campfire,
+  app_version: System.get_env("APP_VERSION"),
+  git_revision: System.get_env("GIT_REVISION")
+
 # Behind a reverse proxy that overwrites X-Forwarded-For (e.g. Caddy in docker-compose.yml), take
 # the client IP from that header. Never enable it when clients can reach the app directly.
 if System.get_env("TRUST_PROXY_HEADERS") in ~w(true 1) do

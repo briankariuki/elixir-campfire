@@ -522,23 +522,26 @@ defmodule CampfireWeb.RoomLive do
     results =
       for entry <- done do
         consume_uploaded_entry(socket, entry, fn %{path: path} ->
+          content_type =
+            Uploads.normalize_content_type(entry.client_type) || MIME.from_path(entry.client_name)
+
+          # Dimensions and a thumbnail for raster images; best effort, never fails the upload
+          image = Uploads.Image.attributes(path, content_type)
+
           with {:ok, key} <- Uploads.store(path, entry.client_name),
-               {:ok, message} <-
-                 Chat.create_message(
-                   room,
-                   %{
-                     attachment_key: key,
-                     attachment_filename: entry.client_name,
-                     attachment_content_type:
-                       Uploads.normalize_content_type(entry.client_type) ||
-                         MIME.from_path(entry.client_name),
-                     attachment_byte_size: entry.client_size
-                   },
-                   actor: user
-                 ) do
+               attrs =
+                 Map.merge(image, %{
+                   attachment_key: key,
+                   attachment_filename: entry.client_name,
+                   attachment_content_type: content_type,
+                   attachment_byte_size: entry.client_size
+                 }),
+               {:ok, message} <- Chat.create_message(room, attrs, actor: user) do
             {:ok, {:ok, message}}
           else
-            error -> {:ok, error}
+            error ->
+              Uploads.delete(image[:attachment_thumbnail_key])
+              {:ok, error}
           end
         end)
       end
@@ -709,6 +712,22 @@ defmodule CampfireWeb.RoomLive do
     """
   end
 
+  # The formatting toolbar (composer_toolbar.js): {format, label, glyph}. Shown by the rich text button.
+  defp format_buttons do
+    [
+      {"bold", "Bold", "B"},
+      {"italic", "Italic", "I"},
+      {"strike", "Strikethrough", "S"},
+      {"highlight", "Highlight", "H"},
+      {"code", "Code", "</>"},
+      {"codeblock", "Code block", "{ }"},
+      {"heading", "Heading", "H1"},
+      {"quote", "Quote", "“"},
+      {"bullet", "Bulleted list", "•"},
+      {"number", "Numbered list", "1."}
+    ]
+  end
+
   attr :uploads, :map, required: true
   attr :typing, :string, default: ""
   attr :room_id, :integer, required: true
@@ -782,7 +801,30 @@ defmodule CampfireWeb.RoomLive do
                     phx-debounce="blur"
                     data-room-id={@room_id}
                     data-mention-menu="composer-mentions"
+                    data-toolbar="composer-toolbar"
+                    data-toolbar-toggle="composer-toolbar-toggle"
                   ></textarea>
+
+                  <%!-- Formatting toolbar: opened by the rich text button, its state kept by the Composer hook --%>
+                  <div
+                    id="composer-toolbar"
+                    class="composer__toolbar"
+                    role="toolbar"
+                    aria-label="Text formatting"
+                    phx-update="ignore"
+                    hidden
+                  >
+                    <button
+                      :for={{format, label, glyph} <- format_buttons()}
+                      type="button"
+                      class="btn btn--borderless composer__format-btn"
+                      data-format={format}
+                      title={label}
+                      aria-label={label}
+                    >
+                      <span aria-hidden="true">{glyph}</span>
+                    </button>
+                  </div>
                 </div>
 
                 <label class="btn btn--borderless txt-small flex-item-no-shrink composer__attachment-btn input--file">
@@ -796,6 +838,24 @@ defmodule CampfireWeb.RoomLive do
                   <.live_file_input upload={@uploads.attachments} />
                   <span class="for-screen-reader">Attach a file</span>
                 </label>
+
+                <button
+                  id="composer-toolbar-toggle"
+                  type="button"
+                  class="btn btn--borderless txt-small flex-item-no-shrink composer__rich-text-btn"
+                  aria-controls="composer-toolbar"
+                  aria-expanded="false"
+                  phx-update="ignore"
+                >
+                  <img
+                    src={~p"/images/text-options.svg"}
+                    width="20"
+                    height="20"
+                    class="colorize--black"
+                    aria-hidden="true"
+                  />
+                  <span class="for-screen-reader">Rich text</span>
+                </button>
 
                 <button type="submit" class="btn btn--reversed flex-item-no-shrink txt-small">
                   <img src={~p"/images/arrow-up.svg"} width="20" height="20" aria-hidden="true" />

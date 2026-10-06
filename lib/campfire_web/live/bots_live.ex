@@ -5,6 +5,8 @@ defmodule CampfireWeb.BotsLive do
   """
   use CampfireWeb, :live_view
 
+  import CampfireWeb.Translations, only: [translation_button: 1]
+
   alias Campfire.Accounts
   alias Campfire.Accounts.User
   alias CampfireWeb.{ErrorMessages, ImageUpload, Paths}
@@ -141,20 +143,25 @@ defmodule CampfireWeb.BotsLive do
       </:nav>
 
       <section class="panel panel--wide txt-align-center flex flex-column position-relative">
-        <div class="pad-inline-double center">
-          <h1 class="margin-none">Chat bots</h1>
-          <p class="margin-none-block-start">
-            With Chat bots, other sites and services can post updates directly to Campfire.
-          </p>
+        <div class="flex align-center gap">
+          <div class="panel__button">
+            <.translation_button key={:chat_bots} />
+          </div>
+          <div class="pad-inline-double center">
+            <h1 class="margin-none">Chat bots</h1>
+            <p class="margin-none-block-start">
+              With Chat bots, other sites and services can post updates directly to Campfire.
+            </p>
 
-          <.link
-            navigate={~p"/account/bots/new"}
-            class="btn btn--reversed txt-large"
-            aria-label="Add a chat bot"
-          >
-            <img src={~p"/images/bot.svg"} width="20" height="20" aria-hidden="true" />
-            <img src={~p"/images/add.svg"} width="20" height="20" aria-hidden="true" />
-          </.link>
+            <.link
+              navigate={~p"/account/bots/new"}
+              class="btn btn--reversed txt-large"
+              aria-label="Add a chat bot"
+            >
+              <img src={~p"/images/bot.svg"} width="20" height="20" aria-hidden="true" />
+              <img src={~p"/images/add.svg"} width="20" height="20" aria-hidden="true" />
+            </.link>
+          </div>
         </div>
 
         <div class="pad-inline pad-block-start">
@@ -201,23 +208,29 @@ defmodule CampfireWeb.BotsLive do
             </div>
           </div>
 
-          <.input
-            field={@form[:name]}
-            icon="bot"
-            label="Name"
-            class="txt-large"
-            placeholder="Name the bot"
-            autocomplete="off"
-            required
-          />
-          <.input
-            field={@form[:webhook_url]}
-            type="url"
-            icon="web"
-            label="Webhook URL"
-            class="txt-large"
-            placeholder="Webhook URL"
-          />
+          <div class="flex align-center gap">
+            <.translation_button key={:bot_name} />
+            <.input
+              field={@form[:name]}
+              icon="bot"
+              label="Name"
+              class="txt-large flex-item-grow"
+              placeholder="Name the bot"
+              autocomplete="off"
+              required
+            />
+          </div>
+          <div class="flex align-center gap">
+            <.translation_button key={:webhook_url} />
+            <.input
+              field={@form[:webhook_url]}
+              type="url"
+              icon="web"
+              label="Webhook URL"
+              class="txt-large flex-item-grow"
+              placeholder="Webhook URL"
+            />
+          </div>
 
           <.icon_button
             icon="check"

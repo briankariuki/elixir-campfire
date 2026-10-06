@@ -159,12 +159,19 @@ defmodule Campfire.Webhooks do
         filename = "attachment.#{ext}"
         {:ok, key} = Uploads.store_binary(body, filename)
 
-        reply(bot, room, %{
-          attachment_key: key,
-          attachment_filename: filename,
-          attachment_content_type: if(mime == "", do: "application/octet-stream", else: mime),
-          attachment_byte_size: byte_size(body)
-        })
+        # Dimensions and a thumbnail for raster images (best effort)
+        image = Uploads.Image.attributes(Uploads.path(key), mime)
+
+        reply(
+          bot,
+          room,
+          Map.merge(image, %{
+            attachment_key: key,
+            attachment_filename: filename,
+            attachment_content_type: if(mime == "", do: "application/octet-stream", else: mime),
+            attachment_byte_size: byte_size(body)
+          })
+        )
 
       true ->
         :ok

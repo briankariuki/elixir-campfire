@@ -16,6 +16,10 @@
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
+    <%!-- The account's custom CSS (CampfireWeb.CustomStyles), after app.css so it can override it --%>
+    <style :if={assigns[:custom_styles]} id="custom-styles">
+      <%= Phoenix.HTML.raw(@custom_styles) %>
+    </style>
   </head>
   <body class={assigns[:body_class]}>
     <a href="#main-content" class="skip-navigation btn">Skip to main content</a>

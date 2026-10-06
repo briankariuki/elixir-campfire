@@ -1,6 +1,6 @@
 defmodule Campfire.Chat.Room.Changes.DestroyContents do
   @moduledoc """
-  Deleting a room: remembers its members and attachment keys before the rows cascade away, then
+  Deleting a room: remembers its members and attachment (and thumbnail) keys before the rows cascade away, then
   after commit deletes the files. The members are told by `Campfire.Notifiers.Fanout`, from the
   `:room_contents` context.
 
@@ -37,12 +37,13 @@ defmodule Campfire.Chat.Room.Changes.DestroyContents do
     end)
   end
 
+  # File keys of attachments and their thumbnails (nil when there is none; `Uploads.delete/1` ignores it).
   # Internal read of the room's own contents; the destroy action has already been authorized.
   defp attachment_keys(room_id) do
     Message
     |> Ash.Query.filter(room_id == ^room_id and not is_nil(attachment_key))
-    |> Ash.Query.select([:attachment_key])
+    |> Ash.Query.select([:attachment_key, :attachment_thumbnail_key])
     |> Ash.read!(authorize?: false)
-    |> Enum.map(& &1.attachment_key)
+    |> Enum.flat_map(&[&1.attachment_key, &1.attachment_thumbnail_key])
   end
 end

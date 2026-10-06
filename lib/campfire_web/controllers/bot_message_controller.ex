@@ -33,14 +33,17 @@ defmodule CampfireWeb.BotMessageController do
     with {:ok, key} <- Campfire.Uploads.store(upload.path, upload.filename) do
       %{size: size} = File.stat!(upload.path)
 
-      attrs = %{
-        attachment_key: key,
-        attachment_filename: upload.filename,
-        attachment_content_type:
-          Campfire.Uploads.normalize_content_type(upload.content_type) ||
-            MIME.from_path(upload.filename),
-        attachment_byte_size: size
-      }
+      content_type =
+        Campfire.Uploads.normalize_content_type(upload.content_type) ||
+          MIME.from_path(upload.filename)
+
+      attrs =
+        Map.merge(Campfire.Uploads.Image.attributes(upload.path, content_type), %{
+          attachment_key: key,
+          attachment_filename: upload.filename,
+          attachment_content_type: content_type,
+          attachment_byte_size: size
+        })
 
       case Chat.create_message(conn.assigns.room, attrs, actor: conn.assigns.bot) do
         {:ok, message} ->
@@ -48,6 +51,7 @@ defmodule CampfireWeb.BotMessageController do
 
         {:error, error} ->
           Campfire.Uploads.delete(key)
+          Campfire.Uploads.delete(attrs[:attachment_thumbnail_key])
           failed(conn, error)
       end
     end

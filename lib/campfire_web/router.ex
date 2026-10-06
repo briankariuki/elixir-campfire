@@ -9,6 +9,10 @@ defmodule CampfireWeb.Router do
     plug :fetch_session
     plug :fetch_live_flash
     plug :put_root_layout, html: {CampfireWeb.Layouts, :root}
+    # After the root layout is chosen: both render with it. CustomStyles assigns the account's CSS
+    # for the root layout (so the incompatible-browser page gets it too), AllowBrowser may halt.
+    plug CampfireWeb.CustomStyles
+    plug CampfireWeb.AllowBrowser
     plug :protect_from_forgery
     plug :put_secure_browser_headers
     plug :block_banned_ip
@@ -91,6 +95,7 @@ defmodule CampfireWeb.Router do
       live "/bots", BotsLive, :index
       live "/bots/new", BotsLive, :new
       live "/bots/:id/edit", BotsLive, :edit
+      live "/custom_styles/edit", CustomStylesLive, :edit
     end
   end
 

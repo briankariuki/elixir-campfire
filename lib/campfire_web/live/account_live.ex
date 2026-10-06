@@ -9,6 +9,7 @@ defmodule CampfireWeb.AccountLive do
   use CampfireWeb, :live_view
 
   import CampfireWeb.SettingsComponents
+  import CampfireWeb.Translations, only: [translation_button: 1]
 
   alias Campfire.Accounts
   alias Campfire.Accounts.User
@@ -173,6 +174,11 @@ defmodule CampfireWeb.AccountLive do
         <.back_button />
         <div :if={@admin?} class="flex align-center gap flex-item-justify-end">
           <.icon_button icon="bot" label="Set up chat bots" navigate={~p"/account/bots"} />
+          <.icon_button
+            icon="art"
+            label="Custom styles"
+            navigate={~p"/account/custom_styles/edit"}
+          />
           <.icon_button icon="settings" label="Admin data console" href={~p"/admin"} />
         </div>
       </:nav>
@@ -217,6 +223,7 @@ defmodule CampfireWeb.AccountLive do
             class="flex flex-column gap"
           >
             <div class="flex align-center gap">
+              <.translation_button key={:account_name} />
               <label class="flex align-center gap flex-item-grow">
                 <span class="for-screen-reader">Account name</span>
                 <.input

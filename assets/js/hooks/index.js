@@ -6,5 +6,8 @@ import Visibility from "./visibility"
 import Copy from "./copy"
 import Lightbox from "./lightbox"
 import Filter from "./filter"
+// Side-effect module: delegated listeners for the translation popups (works without a LiveView)
+import "./popup"
+import Share from "./share"
 
-export default {MessageList, MessagePager, Composer, LocalTime, Visibility, Copy, Lightbox, Filter}
+export default {MessageList, MessagePager, Composer, LocalTime, Visibility, Copy, Lightbox, Filter, Share}

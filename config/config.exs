@@ -87,6 +87,9 @@ config :campfire, :message_html, {CampfireWeb.MessageBody, :to_html_string}
 # Extra Req options for webhook deliveries (tests plug in Req.Test here).
 config :campfire, :webhook_req_options, []
 
+# Extra Req options for link preview fetches (tests plug in Req.Test here).
+config :campfire, :opengraph_req_options, []
+
 # Configure the endpoint
 config :campfire, CampfireWeb.Endpoint,
   url: [host: "localhost"],

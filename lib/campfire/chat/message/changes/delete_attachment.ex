@@ -1,5 +1,5 @@
 defmodule Campfire.Chat.Message.Changes.DeleteAttachment do
-  @moduledoc "After a message is destroyed and committed: deletes its attachment file."
+  @moduledoc "After a message is destroyed and committed: deletes its attachment file and thumbnail."
 
   use Ash.Resource.Change
 
@@ -10,6 +10,7 @@ defmodule Campfire.Chat.Message.Changes.DeleteAttachment do
     Ash.Changeset.after_transaction(changeset, fn
       _changeset, {:ok, message} ->
         Uploads.delete(message.attachment_key)
+        Uploads.delete(message.attachment_thumbnail_key)
         {:ok, message}
 
       _changeset, error ->

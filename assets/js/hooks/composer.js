@@ -1,6 +1,7 @@
 // Composer: put on the composer <textarea> (inside the message <form>).
 //
-// - Enter submits the form (Shift+Enter inserts a newline; ignored while composing with an IME;
+// - Enter submits the form (Shift+Enter inserts a newline, and so does Enter while the formatting
+//   toolbar is open; ignored while composing with an IME;
 //   on touch-only devices Enter is a newline, like the original). Cmd/Ctrl+Enter always submits.
 // - Auto-grows with its content (CSS caps it at ~10 lines).
 // - Pasted files are uploaded with `this.upload(<data-upload-name || "attachments">, files)`.
@@ -13,10 +14,15 @@
 //   5s, enabled again as soon as it reconnects.
 // - `@` mention menu (composer_mentions.js, the listbox is `#<data-mention-menu>`); while it is
 //   open Enter/Tab insert, ArrowUp/ArrowDown move and Escape closes, so none of them send or edit.
+// - Formatting toolbar (composer_toolbar.js; `#<data-toolbar>` opened by `#<data-toolbar-toggle>`): the
+//   buttons insert the Markdown-like syntax MessageBody renders (bold, italic, strike, highlight,
+//   code, code block, heading, quote, lists); Cmd/Ctrl+B and Cmd/Ctrl+I work without it. While the
+//   toolbar is open Enter inserts a newline and only Cmd/Ctrl+Enter sends (like the original).
 // - Handles the server's "composer:reset" push_event: clear, resize and refocus.
 // - Handles "composer:insert" {text}: prepends text (a reply quote) and focuses after it.
 
 import MentionMenu from "./composer_mentions"
+import Toolbar from "./composer_toolbar"
 import {clearDraft, loadDraft, saveDraft} from "./composer_draft"
 
 const TYPING_INTERVAL_MS = 1000
@@ -42,6 +48,15 @@ export default {
         })
       : null
 
+    const toolbar = document.getElementById(this.el.dataset.toolbar || "")
+    this.toolbar = toolbar
+      ? new Toolbar({
+          textarea: this.el,
+          toolbar,
+          toggle: document.getElementById(this.el.dataset.toolbarToggle || ""),
+        })
+      : null
+
     this.el.addEventListener("keydown", event => this.keydown(event))
     this.el.addEventListener("input", () => this.changed())
     this.el.addEventListener("click", () => this.mentions?.update())
@@ -59,6 +74,7 @@ export default {
       this.el.value = ""
       this.discardDraft()
       this.mentions?.close()
+      this.toolbar?.close()
       // The server broadcast "stopped typing" with the send
       this.typingSent = false
       this.lastTypingAt = 0
@@ -109,15 +125,21 @@ export default {
     clearTimeout(this.offlineTimer)
     this.flushDraft()
     this.mentions?.destroy()
+    this.toolbar?.destroy()
   },
 
   keydown(event) {
     if (event.isComposing || event.keyCode === 229) return
     if (this.mentions?.handleKey(event)) return
+    if (this.toolbar?.handleKey(event)) return
 
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter") {
+      const modifier = event.metaKey || event.ctrlKey
       const touchOnly = matchMedia("(pointer: coarse)").matches && !matchMedia("(pointer: fine)").matches
-      if (touchOnly && !(event.metaKey || event.ctrlKey)) return
+
+      // Cmd/Ctrl+Enter always sends; plain Enter only without Shift, on a pointer device and while
+      // the formatting toolbar is closed. Otherwise it is a newline.
+      if (!modifier && (event.shiftKey || touchOnly || this.toolbar?.open)) return
 
       event.preventDefault()
       this.submit()
@@ -216,6 +238,7 @@ export default {
 
     const controls = [this.el, ...(this.el.form?.querySelectorAll("button[type=submit], input[type=file]") || [])]
     controls.forEach(control => (control.disabled = offline))
+    this.toolbar?.setDisabled(offline)
 
     if (offline) {
       this.el.dataset.onlinePlaceholder ??= this.el.placeholder

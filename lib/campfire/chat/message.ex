@@ -13,7 +13,7 @@ defmodule Campfire.Chat.Message do
 
   require Ash.Query
 
-  alias Campfire.Chat.Message.{Changes, Validations}
+  alias Campfire.Chat.Message.{Changes, Notifiers, Validations}
 
   @page_size 40
   @loads [:creator, boosts: [:booster]]
@@ -71,6 +71,19 @@ defmodule Campfire.Chat.Message do
         timeout :timer.seconds(30)
         worker_module_name Campfire.Chat.Message.AshOban.Worker.DeliverWebhooks
         scheduler_module_name Campfire.Chat.Message.AshOban.Scheduler.DeliverWebhooks
+      end
+
+      # One job per message with a link: `Notifiers.EnqueueEmbed` enqueues it after commit.
+      trigger :fetch_embed do
+        action :fetch_embed
+        queue :default
+        scheduler_cron false
+        # A link that can't be previewed isn't an error: the job completes without an embed.
+        max_attempts 1
+        lock_for_update? false
+        timeout :timer.seconds(30)
+        worker_module_name Campfire.Chat.Message.AshOban.Worker.FetchEmbed
+        scheduler_module_name Campfire.Chat.Message.AshOban.Scheduler.FetchEmbed
       end
     end
   end
@@ -136,7 +149,10 @@ defmodule Campfire.Chat.Message do
         :attachment_key,
         :attachment_filename,
         :attachment_content_type,
-        :attachment_byte_size
+        :attachment_byte_size,
+        :attachment_width,
+        :attachment_height,
+        :attachment_thumbnail_key
       ]
 
       argument :room, :struct, allow_nil?: false, constraints: [instance_of: Campfire.Chat.Room]
@@ -149,8 +165,8 @@ defmodule Campfire.Chat.Message do
       change Changes.ResolveMentions
       change Changes.TouchRoomAndLoad
       change Changes.MarkUnread
-      # Unread marks for every member and bot webhooks, after commit.
-      notifiers [Campfire.Notifiers.Fanout]
+      # Unread marks for every member and bot webhooks, after commit; the link preview job.
+      notifiers [Campfire.Notifiers.Fanout, Notifiers.EnqueueEmbed]
     end
 
     update :update do
@@ -160,7 +176,33 @@ defmodule Campfire.Chat.Message do
       accept [:body]
       validate Validations.HasContent
       change Changes.ResolveMentions
+      change Changes.RefreshEmbed
       change Changes.TouchRoomAndLoad
+      # A new first link gets a link preview job, after commit.
+      notifiers [Notifiers.EnqueueEmbed]
+    end
+
+    update :fetch_embed do
+      description """
+      Fetches the link preview of the message's first link and stores it with `:set_embed`. Only
+      run by the `:fetch_embed` Oban trigger.
+      """
+
+      accept []
+      require_atomic? false
+      transaction? false
+      change Changes.FetchEmbed
+    end
+
+    update :set_embed do
+      description """
+      Stores the link preview (`url`, `title`, `description`, `image_url`, `site_name`) and
+      broadcasts the message. Internal: no policy matches, so it only runs with `authorize?: false`
+      (by `:fetch_embed`).
+      """
+
+      accept [:embed]
+      change Changes.LoadForBroadcast
     end
 
     update :deliver_webhooks do
@@ -216,6 +258,7 @@ defmodule Campfire.Chat.Message do
 
     publish :create, [:room_id], event: "message_created"
     publish :update, [:room_id], event: "message_updated"
+    publish :set_embed, [:room_id], event: "message_updated"
     publish :destroy, [:room_id], event: "message_deleted"
   end
 
@@ -244,6 +287,12 @@ defmodule Campfire.Chat.Message do
     attribute :attachment_filename, :string, public?: true
     attribute :attachment_content_type, :string, public?: true
     attribute :attachment_byte_size, :integer, public?: true
+    attribute :attachment_width, :integer, public?: true
+    attribute :attachment_height, :integer, public?: true
+    attribute :attachment_thumbnail_key, :string, public?: true
+
+    # OpenGraph preview: url, title, description, image_url, site_name
+    attribute :embed, :map, public?: true
 
     timestamps()
   end

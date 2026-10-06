@@ -7,6 +7,7 @@ defmodule CampfireWeb.RoomComponents do
   use CampfireWeb, :html
 
   import CampfireWeb.SettingsComponents, only: [invite: 1]
+  import CampfireWeb.Translations, only: [translation_button: 1]
 
   alias Campfire.{Accounts, Chat}
   alias Campfire.Chat.Message
@@ -69,11 +70,17 @@ defmodule CampfireWeb.RoomComponents do
           <figure class="account-logo avatar center margin-block-end txt-large">
             <img src={Paths.logo_path(@account)} alt="Account logo" width="300" height="300" />
           </figure>
-          <p>
-            <strong>Welcome to Campfire</strong><br />
-            To invite people to chat, share the join link below.
-          </p>
-          <.invite url={@invite_url} />
+          <div class="flex align-center gap">
+            <div class="system-welcome--translation">
+              <.translation_button key={:invite_message} />
+            </div>
+            <p>
+              <strong>Welcome to Campfire</strong><br />
+              To invite people to chat, share the join link below.
+            </p>
+          </div>
+          <%!-- the message area already has the Lightbox hook for the QR button --%>
+          <.invite url={@invite_url} lightbox={false} />
         </div>
       </div>
     </div>

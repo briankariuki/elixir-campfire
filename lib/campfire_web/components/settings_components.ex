@@ -38,6 +38,33 @@ defmodule CampfireWeb.SettingsComponents do
     """
   end
 
+  @doc """
+  A round button showing the QR code of `url` in the lightbox (the original's `link_to_zoom_qr_code`).
+
+  The SVG is a `data:` URI (`CampfireWeb.QRCode`), so there is no QR endpoint. The click is handled
+  by the `Lightbox` hook of an ancestor (`a[data-lightbox]`).
+  """
+  attr :id, :string, required: true
+  attr :url, :string, required: true
+  attr :label, :string, required: true
+
+  def qr_button(assigns) do
+    assigns = assign(assigns, :qr, CampfireWeb.QRCode.data_uri(assigns.url))
+
+    ~H"""
+    <a id={@id} href={@qr} class="btn" data-lightbox data-lightbox-download={@qr}>
+      <span class="for-screen-reader">{@label}</span>
+      <img
+        src={~p"/images/qr-code.svg"}
+        width="20"
+        height="20"
+        class="colorize--black"
+        aria-hidden="true"
+      />
+    </a>
+    """
+  end
+
   @doc "The session transfer link of `user` (own profile, or an admin helping a user)."
   attr :user, :map, required: true
   attr :current_user, :map, required: true
@@ -46,7 +73,7 @@ defmodule CampfireWeb.SettingsComponents do
     assigns = assign(assigns, :url, CampfireWeb.Transfer.url(assigns.user))
 
     ~H"""
-    <fieldset>
+    <fieldset id="transfer-link" phx-hook="Lightbox">
       <legend class="gap">
         <img
           :for={icon <- ~w(laptop transfer mobile-phone)}
@@ -79,6 +106,7 @@ defmodule CampfireWeb.SettingsComponents do
         <input type="text" class="input" value={@url} id="session_transfer_url" readonly />
 
         <div class="flex align-center center gap">
+          <.qr_button id="qr-transfer-url" url={@url} label="Show auto-login QR code" />
           <.copy_button id="copy-transfer-url" text={@url} label="Copy auto-login link" />
         </div>
       </div>
@@ -86,13 +114,22 @@ defmodule CampfireWeb.SettingsComponents do
     """
   end
 
-  @doc "The invite link widget (`accounts/_invite`), with a regenerate button for admins."
+  @doc "The invite link widget (`accounts/_invite`): the link, QR code and copy buttons, and a regenerate button for admins."
   attr :url, :string, required: true
   attr :admin, :boolean, default: false
 
+  attr :lightbox, :boolean,
+    default: true,
+    doc:
+      "mount the `Lightbox` hook for the QR button; pass false inside a page that already has one (the room's message area)"
+
   def invite(assigns) do
     ~H"""
-    <div class="flex flex-column align-center gap">
+    <div
+      id="invite"
+      class="flex flex-column align-center gap"
+      phx-hook={@lightbox && "Lightbox"}
+    >
       <label class="flex flex-column gap full-width" style="--row-gap: 0.5em">
         <strong id="invite_label" class="invite-label">Share to invite more people</strong>
         <span class="flex align-center gap input input--actor fill-white">
@@ -115,6 +152,7 @@ defmodule CampfireWeb.SettingsComponents do
       </label>
 
       <div class="flex align-center gap">
+        <.qr_button id="qr-invite-url" url={@url} label="Show join link QR code" />
         <.copy_button id="copy-invite-url" text={@url} label="Copy join link" />
 
         <button

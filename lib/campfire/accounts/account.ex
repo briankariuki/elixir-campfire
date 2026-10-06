@@ -29,7 +29,7 @@ defmodule Campfire.Accounts.Account do
     update :update do
       # DeleteReplacedUpload reads the stored logo_key.
       require_atomic? false
-      accept [:name, :logo_key, :restrict_room_creation_to_administrators]
+      accept [:name, :logo_key, :restrict_room_creation_to_administrators, :custom_styles]
       change {Campfire.Changes.DeleteReplacedUpload, attribute: :logo_key}
     end
 
@@ -107,6 +107,9 @@ defmodule Campfire.Accounts.Account do
     end
 
     attribute :logo_key, :string, public?: true
+
+    # Admin-provided CSS, injected into every page
+    attribute :custom_styles, :string, public?: true
 
     attribute :restrict_room_creation_to_administrators, :boolean do
       allow_nil? false

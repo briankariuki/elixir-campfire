@@ -102,7 +102,9 @@ defmodule Campfire.MixProject do
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 1.2.0"},
-      {:lazy_html, ">= 0.1.0", only: :test},
+      {:lazy_html, ">= 0.1.0"},
+      {:eqrcode, "~> 0.2"},
+      {:vix, "~> 0.33"},
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
@@ -110,7 +112,9 @@ defmodule Campfire.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:bcrypt_elixir, "~> 3.0"},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      # Link previews connect with Mint directly (Campfire.Chat.Opengraph.Transport)
+      {:mint, "~> 1.6"}
     ]
   end
 

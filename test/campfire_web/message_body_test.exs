@@ -209,6 +209,182 @@ defmodule CampfireWeb.MessageBodyTest do
     end
   end
 
+  describe "inline formatting" do
+    defp wrapped(inner), do: ~s(<div class="lexxy-content">#{inner}</div>)
+
+    test "bold, italic, strike, highlight and code" do
+      assert html("**b** *i* _i_ ~~s~~ ==h== `c`") ==
+               wrapped(
+                 "<strong>b</strong> <em>i</em> <em>i</em> <s>s</s> <mark>h</mark> <code>c</code>"
+               )
+
+      assert html("***both***") == wrapped("<strong><em>both</em></strong>")
+      assert html("**a *b* c**") == wrapped("<strong>a <em>b</em> c</strong>")
+      assert html("*a **b** c*") == wrapped("<em>a <strong>b</strong> c</em>")
+    end
+
+    test "markers must hug the text and don't apply inside words" do
+      for text <- ["2 * 3 * 4", "snake_case_name", "a * b*", "** a**", "__init__", "x == y == z"] do
+        assert html(text) == wrapped(text)
+      end
+
+      assert html("an unmatched **marker") == wrapped("an unmatched **marker")
+    end
+
+    test "formatting never lets HTML through" do
+      result = html("**<script>alert(1)</script>** _<img src=x onerror=y>_ ==&==")
+
+      assert result ==
+               wrapped(
+                 "<strong>&lt;script&gt;alert(1)&lt;/script&gt;</strong> " <>
+                   "<em>&lt;img src=x onerror=y&gt;</em> <mark>&amp;</mark>"
+               )
+
+      refute html(~s(`</code><script>`)) =~ "<script"
+    end
+
+    test "inline code is literal: no formatting, links or mentions" do
+      ann = user_fixture(name: "Ann")
+      opts = [mentioned: [ann.id], users: %{ann.id => ann}]
+
+      assert html("`**x** https://x.com @Ann`", opts) ==
+               wrapped("<code>**x** https://x.com @Ann</code>")
+
+      assert html("@Ann `@Ann`", opts) =~ ~s(</span> <code>@Ann</code>)
+    end
+
+    test "URLs and mentions inside formatting keep working" do
+      ann = user_fixture(name: "Ann")
+      opts = [mentioned: [ann.id], users: %{ann.id => ann}]
+
+      result = html("**https://x.com/a_b_c** and ==@Ann==", opts)
+
+      assert result =~
+               ~s(<strong><a href="https://x.com/a_b_c" target="_blank" rel="noopener">https://x.com/a_b_c</a></strong>)
+
+      assert result =~ ~s(<mark><span class="mention">)
+      assert result =~ "Ann</span></mark>"
+    end
+
+    test "a URL's own underscores and stars aren't formatting" do
+      result = html("https://x.com/_a_/*b*")
+      assert result =~ ~s(href="https://x.com/_a_/*b")
+      refute result =~ "<em>"
+    end
+
+    test "placeholder characters in the text can't forge a slot" do
+      assert html("x\u{E000}0\u{E001}y `c`") == wrapped("x0y <code>c</code>")
+    end
+  end
+
+  describe "blocks" do
+    test "# makes an h1, only a single # does" do
+      assert html("# Title **x**\nbody") == wrapped("<h1>Title <strong>x</strong></h1>body")
+
+      for text <- ["## two", "#tag", "#", "# ", "a # b"] do
+        refute html(text) =~ "<h1"
+      end
+    end
+
+    test "- and * make bullet lists, N. numbered lists" do
+      assert html("- a\n* b *i*\nafter") ==
+               wrapped("<ul><li>a</li><li>b <em>i</em></li></ul>after")
+
+      assert html("1. a\n2. b") == wrapped("<ol><li>a</li><li>b</li></ol>")
+      assert html("3. a\n4. b") == wrapped(~s(<ol start="3"><li>a</li><li>b</li></ol>))
+
+      assert html("- a\n1. b") == wrapped("<ul><li>a</li></ul><ol><li>b</li></ol>")
+
+      for text <- ["-a", "*a*", "- ", "1.5 hours", "1) a", " - indented"] do
+        refute html(text) =~ "<li"
+      end
+    end
+
+    test "no <br> or empty line around blocks, but blank lines elsewhere stay" do
+      assert html("intro\n\n- a\n\nafter") == wrapped("intro<ul><li>a</li></ul>after")
+      assert html("a\n\nb") == wrapped("a<br><br>b")
+    end
+
+    test "fenced code becomes <pre><code> and is literal" do
+      ann = user_fixture(name: "Ann")
+      opts = [mentioned: [ann.id], users: %{ann.id => ann}]
+
+      assert html("```\nputs <b>\n\n  **x** @Ann https://x.com\n> q\n# h\n```", opts) ==
+               wrapped(
+                 "<pre><code>puts &lt;b&gt;\n\n  **x** @Ann https://x.com\n&gt; q\n# h</code></pre>"
+               )
+
+      assert html("a\n```ruby\nx\n```\nb") ==
+               wrapped(~s(a<pre data-language="ruby"><code>x</code></pre>b))
+    end
+
+    test "an unclosed or odd fence is plain text" do
+      assert html("```\nunclosed") == wrapped("```<br>unclosed")
+      refute html("```\nunclosed") =~ "<pre"
+      refute html("``` not a fence\nx\n```") =~ "<pre"
+      refute html(~s(```"><script>\nx\n```)) =~ "<script"
+    end
+
+    test "quotes hold blocks, but no nested quotes" do
+      assert html("> # h\n> - a\n> ```\n> **x**\n> ```") ==
+               wrapped(
+                 "<blockquote><h1>h</h1><ul><li>a</li></ul><pre><code>**x**</code></pre></blockquote>"
+               )
+
+      assert html("> a\n> > b") == wrapped("<blockquote>a<br>&gt; b</blockquote>")
+    end
+
+    test "a formatted reply renders as a quote with formatting and a cite" do
+      assert html("> **bold** and `code`\n— Ann /rooms/1/@2\n\nreply") ==
+               wrapped(
+                 "<blockquote><strong>bold</strong> and <code>code</code></blockquote>" <>
+                   ~s(<cite>Ann <a href="/rooms/1/@2">#</a></cite>reply)
+               )
+    end
+  end
+
+  describe "reply_text/2 with formatting" do
+    test "quotes the source text, code blocks included" do
+      author = user_fixture(name: "Ann Smith")
+      body = "# T\n**b**\n```\n> keep\n\n— keep too\n```\n- x"
+
+      text =
+        MessageBody.reply_text(%{
+          id: 7,
+          room_id: 3,
+          body: body,
+          mentioned_user_ids: [],
+          creator: author
+        })
+
+      assert text ==
+               "> # T\n> **b**\n> ```\n> > keep\n>\n> — keep too\n> ```\n> - x\n— Ann Smith /rooms/3/@7\n\n"
+
+      rendered = html(text <> "ok")
+
+      assert rendered =~
+               "<blockquote><h1>T</h1><strong>b</strong><pre><code>&gt; keep\n\n— keep too</code></pre><ul><li>x</li></ul></blockquote>"
+
+      assert rendered =~ "<cite>Ann Smith"
+    end
+
+    test "doesn't strip mentions inside code" do
+      ann = user_fixture(name: "Ann")
+      bob = user_fixture(name: "Bob")
+
+      text =
+        MessageBody.reply_text(%{
+          id: 1,
+          room_id: 1,
+          body: "hi @Ann\n```\n@Ann\n```",
+          mentioned_user_ids: [ann.id],
+          creator: bob
+        })
+
+      assert text =~ "> hi Ann\n> ```\n> @Ann\n> ```\n"
+    end
+  end
+
   test "loads mentioned users that aren't in the given map" do
     ann = user_fixture(name: "Ann")
     assert html("@Ann!", mentioned: [ann.id]) =~ ~s(href="/users/#{ann.id}")

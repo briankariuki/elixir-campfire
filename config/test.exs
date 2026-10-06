@@ -41,6 +41,9 @@ config :campfire, :uploads_dir, Path.join(System.tmp_dir!(), "campfire_test_uplo
 # finish before the action that triggered them returns.
 config :campfire, Oban, testing: :inline
 config :campfire, :webhook_req_options, plug: {Req.Test, Campfire.Webhooks}
+config :campfire, :opengraph_req_options, plug: {Req.Test, Campfire.Chat.Opengraph}
+# No real DNS in tests: fixed addresses for the host names the tests use.
+config :campfire, :opengraph_resolver, {Campfire.OpengraphResolver, :resolve}
 
 # Fast password hashing in tests
 config :bcrypt_elixir, log_rounds: 4

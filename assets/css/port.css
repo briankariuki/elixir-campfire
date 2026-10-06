@@ -122,3 +122,85 @@ body > [data-phx-session] {
 .direct .avatar__group:has(> :last-child:nth-child(3)) > :last-child {
   margin-inline: 1.25ch -1.25ch;
 }
+
+/* Composer formatting toolbar (composer_toolbar.js). The original's Lexxy toolbar is a web
+   component; here it is a row of plain buttons under the textarea that insert the Markdown-like
+   syntax MessageBody renders. Like the rich text button (composer.css) it is desktop only; the
+   `hidden` attribute is its open/closed state. */
+.composer__toolbar {
+  display: none;
+}
+
+@media (min-width: 100ch) and (any-hover: hover) and (pointer: fine) {
+  .composer__toolbar:not([hidden]) {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3em;
+    padding-block-end: 0.25em;
+  }
+}
+
+.composer__format-btn {
+  --btn-padding: 0;
+  --hover-filter: brightness(0.85);
+
+  block-size: 1.9em;
+  font-family: inherit;
+  font-size: var(--text-small, 0.85rem);
+  inline-size: 1.9em;
+  line-height: 1;
+
+  @media (any-hover: hover) {
+    &:where(:not(:active):hover) {
+      filter: var(--hover-filter);
+      box-shadow: none;
+    }
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  &[data-format="bold"] span { font-weight: 900; }
+  &[data-format="italic"] span { font-style: italic; font-weight: 500; }
+  &[data-format="strike"] span { text-decoration: line-through; }
+
+  &[data-format="highlight"] span {
+    background: #ffe14d;
+    border-radius: 0.2em;
+    color: #000;
+    padding-inline: 0.25em;
+  }
+
+  &[data-format="code"] span,
+  &[data-format="codeblock"] span {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+  }
+
+  &[data-format="heading"] span { font-size: 0.9em; font-weight: 800; }
+}
+
+/* `mark` in a message: the stylesheet has no rule, so the browser's default would be used */
+.lexxy-content mark {
+  background-color: #ffe14d;
+  border-radius: 0.2em;
+  color: #000;
+  padding-inline: 0.15em;
+}
+
+.lexxy-content code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+/* The code block is already boxed by `pre` */
+.lexxy-content pre code {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  padding: 0;
+}
