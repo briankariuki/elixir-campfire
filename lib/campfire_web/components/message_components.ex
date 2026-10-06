@@ -178,7 +178,7 @@ defmodule CampfireWeb.MessageComponents do
       <% :video -> %>
         <video src={@url} class="message__attachment max-inline-size" controls preload="metadata"></video>
       <% :other -> %>
-        <div class="flex-inline align-center gap-half pad-inline pad-block-half">
+        <div class="flex-inline align-center gap-half">
           <img
             src={~p"/images/common-file-text.svg"}
             width="22"
@@ -187,7 +187,13 @@ defmodule CampfireWeb.MessageComponents do
             aria-hidden="true"
           />
           <span class="overflow-ellipsis">{@message.attachment_filename}</span>
-          <a class="btn btn--plain" href={@url <> "?download=1"} download>
+          <%!-- The original's small, borderless message action button (Messages::AttachmentPresentation) --%>
+          <a
+            class="btn message__action-btn"
+            style="--width: auto;"
+            href={@url <> "?download=1"}
+            download
+          >
             <img src={~p"/images/download.svg"} width="20" height="20" aria-hidden="true" />
             <span class="for-screen-reader">Download {@message.attachment_filename}</span>
           </a>
