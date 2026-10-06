@@ -5,7 +5,8 @@ defmodule Campfire.Accounts.Account do
     otp_app: :campfire,
     domain: Campfire.Accounts,
     data_layer: AshPostgres.DataLayer,
-    authorizers: [Ash.Policy.Authorizer]
+    authorizers: [Ash.Policy.Authorizer],
+    notifiers: [Campfire.Notifiers.AccountChanged]
 
   postgres do
     table "accounts"

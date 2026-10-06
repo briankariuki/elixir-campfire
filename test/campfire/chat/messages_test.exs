@@ -560,8 +560,11 @@ defmodule Campfire.Chat.MessagesTest do
 
       assert {:ok, boost} = Chat.create_boost(message, "🎉", actor: member)
       assert boost.booster.id == member.id
-      assert_receive {:boost_created, %{id: id, content: "🎉", booster: %{}}}
+      assert_receive {:boost_created, %{id: id, content: "🎉", booster: %{}, message: broadcast}}
       assert id == boost.id
+      assert broadcast.id == message.id
+      assert [%{id: ^id, booster: %{id: booster_id}}] = broadcast.boosts
+      assert booster_id == member.id
       assert boost.room_id == room.id
 
       assert [%{content: "🎉"}] =
@@ -570,7 +573,7 @@ defmodule Campfire.Chat.MessagesTest do
       assert {:error, %Ash.Error.Forbidden{}} = Chat.destroy_boost(boost, actor: author)
       assert {:error, %Ash.Error.Forbidden{}} = Chat.destroy_boost(boost, actor: admin_fixture())
       assert :ok = Chat.destroy_boost(boost, actor: member)
-      assert_receive {:boost_deleted, %{id: ^id}}
+      assert_receive {:boost_deleted, %{id: ^id, message: %{boosts: []}}}
     end
   end
 

@@ -45,7 +45,7 @@ defmodule CampfireWeb.JoinController do
     |> render(:join,
       page_title: "Sign up",
       body_class: "signup",
-      account: Accounts.get_account!(),
+      account: Campfire.AccountCache.get(),
       admin: CampfireWeb.AuthHTML.contact_admin(),
       join_code: conn.params["join_code"],
       form: Phoenix.Component.to_form(params, as: :user)

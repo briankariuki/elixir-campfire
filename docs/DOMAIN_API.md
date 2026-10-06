@@ -95,6 +95,7 @@ Request flow: `Accounts.get_session_by_token!(token)` → `session.user`, then `
 | `list_rooms()` | any user | The actor's rooms (all kinds), ordered by name. Includes rooms the actor made invisible |
 | `oldest_room()` | any user | `{:ok, room}` with the actor's oldest room (by `inserted_at`, then id; all kinds), or `{:ok, nil}` when they have none. Where `/` lands when there is no valid last room |
 | `get_room(id)` | member | `{:ok, room}`, or NotFound for non-members |
+| `get_room_with_members(id)` | member | Like `get_room`, with `:users` loaded as light cards (only `id`, `name`, `avatar_key`; the rest is `%Ash.NotLoaded{}`). What the room page holds per connected socket |
 | `create_open_room(name)` | active person; admin only when the account restricts room creation | `{:ok, room}`. Every active user (bots included) becomes a member with involvement `:mentions` |
 | `create_closed_room(name, user_ids)` | same as above | `{:ok, room}`. Only `user_ids` become members. **The creator isn't added automatically** (the form pre-checks them) |
 | `find_or_create_direct_room(user_ids)` | any active user | `{:ok, room}`. The actor is always included. Returns the existing DM for exactly that set of users, or creates one (involvement `:everything`). Idempotent |
@@ -179,7 +180,7 @@ Topic helpers: `room_topic/1`, `user_topic/1`, `typing_topic/1`, `presence_topic
 | `"room:<id>"` | `{:message_created, %Message{creator, boosts}}` | message created (web, bot API, webhook reply) |
 | `"room:<id>"` | `{:message_updated, %Message{creator, boosts}}` | message edited |
 | `"room:<id>"` | `{:message_deleted, %Message{}}` | message destroyed (also during ban cleanup) |
-| `"room:<id>"` | `{:boost_created, %Boost{booster}}` / `{:boost_deleted, %Boost{}}` | boost added or removed (use `boost.message_id`) |
+| `"room:<id>"` | `{:boost_created, %Boost{booster, message}}` / `{:boost_deleted, %Boost{booster, message}}` | boost added or removed. `boost.message` is the message with `Message.loads()` (its boosts and their boosters, as after the change), read once when broadcasting (`Campfire.PubSubBroadcaster`): re-render it, don't re-read it |
 | `"room:<id>:typing"` | `{:typing, :start \| :stop, %{id:, name:}}` | **the web layer** sends this itself (`Phoenix.PubSub.broadcast_from`) |
 | `"user:<id>"` | `{:room_unread, room_id}` | a new message, sent to **every** member (author included; ignore it for the open room) |
 | `"user:<id>"` | `{:room_read, room_id}` | `mark_read` |

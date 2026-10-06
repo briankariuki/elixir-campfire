@@ -45,6 +45,9 @@ config :campfire, :opengraph_req_options, plug: {Req.Test, Campfire.Chat.Opengra
 # No real DNS in tests: fixed addresses for the host names the tests use.
 config :campfire, :opengraph_resolver, {Campfire.OpengraphResolver, :resolve}
 
+# The SQL sandbox rolls the account back between tests; a cache would not follow.
+config :campfire, Campfire.AccountCache, enabled: false
+
 # Fast password hashing in tests
 config :bcrypt_elixir, log_rounds: 4
 

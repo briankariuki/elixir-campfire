@@ -59,6 +59,7 @@ defmodule CampfireWeb.MessageBody do
 
   alias Campfire.Chat.Mentions
   alias Campfire.Chat.Message
+  alias CampfireWeb.MessageBody.Cache
   alias CampfireWeb.{Endpoint, Paths}
 
   # Never ends in a character that is probably a formatting marker (`**https://x.com**`), and stops
@@ -114,6 +115,42 @@ defmodule CampfireWeb.MessageBody do
       |> render_blocks(ctx)
 
     {:safe, [~s(<div class="lexxy-content">), html, "</div>"]}
+  end
+
+  @doc """
+  `to_html/3`, rendered once per message version and kept in `CampfireWeb.MessageBody.Cache`, for
+  the room and search LiveViews, where every connected viewer renders the same message.
+
+  Returns `{:safe, binary}`. The key is the message id and `updated_at`, the `live` option, and a
+  hash of the body and of the mentioned users' id, name and avatar key (what the mention markup
+  shows), so an edit or a rename renders again. Messages without an id or a text body are rendered
+  uncached.
+  """
+  def cached_html(message, users \\ %{}, opts \\ [])
+
+  def cached_html(%{id: id, body: body} = message, users, opts)
+      when not is_nil(id) and is_binary(body) and body != "" do
+    mentioned = mentioned_users(message, users)
+    live? = Keyword.get(opts, :live, false)
+    key = {id, Map.get(message, :updated_at), live?, digest(body, mentioned)}
+
+    html =
+      Cache.fetch(key, fn ->
+        # The mentioned users are resolved already, so a miss doesn't load them again
+        message |> to_html(Map.new(mentioned, &{&1.id, &1}), opts) |> safe_binary()
+      end)
+
+    {:safe, html}
+  end
+
+  def cached_html(message, users, opts), do: to_html(message, users, opts)
+
+  defp safe_binary({:safe, iodata}), do: IO.iodata_to_binary(iodata)
+
+  # What the output depends on besides the message version: the body and the mention markup
+  defp digest(body, mentioned) do
+    users = Enum.map(mentioned, &{&1.id, &1.name, &1.avatar_key})
+    :erlang.md5(:erlang.term_to_binary({body, users}))
   end
 
   @doc """

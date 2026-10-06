@@ -18,6 +18,12 @@ defmodule Campfire.Accounts.Session do
     references do
       reference :user, on_delete: :delete
     end
+
+    # Looked up and deleted by user on deactivate, ban and "log out everywhere"; Postgres
+    # doesn't index foreign keys on its own.
+    custom_indexes do
+      index [:user_id]
+    end
   end
 
   actions do

@@ -20,6 +20,7 @@ defmodule Campfire.Chat do
       define :list_rooms, action: :for_user
       define :oldest_room, action: :oldest_for_user, not_found_error?: false
       define :get_room, action: :read, get_by: [:id]
+      define :get_room_with_members, action: :with_members, args: [:id]
       define :create_open_room, action: :create_open, args: [:name]
       define :create_closed_room, action: :create_closed, args: [:name, :user_ids]
       define :find_or_create_direct_room, action: :find_or_create_direct, args: [:user_ids]

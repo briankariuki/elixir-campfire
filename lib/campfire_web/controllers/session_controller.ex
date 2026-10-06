@@ -42,7 +42,7 @@ defmodule CampfireWeb.SessionController do
 
   # Redirects to first run until the account exists.
   defp render_form(conn, params, failed) do
-    case Accounts.get_account!() do
+    case Campfire.AccountCache.get() do
       nil ->
         conn |> put_status(:found) |> redirect(to: ~p"/first_run")
 

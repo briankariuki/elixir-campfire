@@ -4,7 +4,7 @@ defmodule CampfireWeb.CustomStyles do
   on every page (the original's `custom_styles_tag`).
 
   As a plug in the `:browser` pipeline it assigns `:custom_styles` (the sanitised CSS, or `nil`) to
-  the conn. That is one primary-key read of the single account row per full page load; live
+  the conn. The account comes from `Campfire.AccountCache`, so a page load costs no query; live
   navigation doesn't re-render the root layout, so a change applies on the next load (the editor
   does a full redirect after saving).
 
@@ -24,7 +24,7 @@ defmodule CampfireWeb.CustomStyles do
 
   @doc "The sanitised custom CSS of the account, or nil when there is none."
   def current do
-    case Campfire.Accounts.get_account!() do
+    case Campfire.AccountCache.get() do
       %{custom_styles: css} -> sanitize(css)
       nil -> nil
     end

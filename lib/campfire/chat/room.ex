@@ -26,6 +26,18 @@ defmodule Campfire.Chat.Room do
   actions do
     defaults [:read]
 
+    read :with_members do
+      description """
+      The room with its members as light cards (`id`, `name`, `avatar_key` only): what a room page
+      needs, without every member's other attributes.
+      """
+
+      get? true
+      argument :id, :integer, allow_nil?: false
+      filter expr(id == ^arg(:id))
+      prepare Campfire.Chat.Room.Preparations.LoadMemberCards
+    end
+
     read :for_user do
       description "The actor's rooms, ordered by name."
       prepare build(sort: [sort_name: :asc, id: :asc])

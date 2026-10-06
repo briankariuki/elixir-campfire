@@ -9,7 +9,7 @@ defmodule CampfireWeb.RoomComponents do
   import CampfireWeb.SettingsComponents, only: [invite: 1]
   import CampfireWeb.Translations, only: [translation_button: 1]
 
-  alias Campfire.{Accounts, Chat}
+  alias Campfire.Chat
   alias Campfire.Chat.Message
   alias CampfireWeb.Paths
 
@@ -21,7 +21,7 @@ defmodule CampfireWeb.RoomComponents do
   (with `account-has-logo` when the account has a logo).
   """
   def room_assigns(room, user) do
-    account = Accounts.get_account!()
+    account = Campfire.AccountCache.get()
 
     original? =
       match?({:ok, %{id: id}} when id == room.id, Chat.oldest_room(actor: user)) and

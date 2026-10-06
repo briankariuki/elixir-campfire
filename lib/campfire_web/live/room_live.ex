@@ -32,7 +32,7 @@ defmodule CampfireWeb.RoomLive do
     user = socket.assigns.current_user
 
     with {id, ""} <- Integer.parse(params["id"] || ""),
-         {:ok, room} <- Chat.get_room(id, actor: user, load: [:users]) do
+         {:ok, room} <- Chat.get_room_with_members(id, actor: user) do
       {:ok, mount_room(socket, room, params["message_id"])}
     else
       _ ->
@@ -404,8 +404,11 @@ defmodule CampfireWeb.RoomLive do
     {:noreply, drop_message(socket, message)}
   end
 
-  def handle_info({event, boost}, socket) when event in [:boost_created, :boost_deleted] do
-    {:noreply, reinsert_message(socket, boost.message_id)}
+  # The broadcast carries the message with its boosts, read once for every viewer
+  # (`Campfire.PubSubBroadcaster`); nil when the message was deleted meanwhile
+  def handle_info({event, %{message: %Message{} = message}}, socket)
+      when event in [:boost_created, :boost_deleted] do
+    {:noreply, insert_message(socket, message)}
   end
 
   def handle_info({:typing, :start, %{id: id, name: name}}, socket) do
