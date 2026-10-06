@@ -204,3 +204,17 @@ body > [data-phx-session] {
   font: inherit;
   padding: 0;
 }
+
+/* Link preview cards. The original's Lexxy stylesheet (not ported) resets the attachment <figure>,
+   so the browser's default figure margin (40px inline) indented the card. Line it up with the
+   message text and give it the message bubble's own padding. */
+.lexxy-content:has(> .attachment--og) {
+  .attachment--og {
+    margin: 0;
+  }
+
+  .og-embed {
+    margin-block: var(--block-space-half) 0;
+    padding: var(--content-padding-block) var(--content-padding-inline);
+  }
+}
