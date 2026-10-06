@@ -13,7 +13,10 @@ defmodule CampfireWeb.MessageBody do
       reply attribution and becomes `<cite>` (see "Replies"). Inside a quote, the other blocks
       (headings, lists, code) work too.
     * `# heading` becomes `<h1>` (the original only has a first-level heading).
-    * `- item` / `* item` lines become a `<ul>`, `1. item` lines an `<ol>`.
+    * `- item` / `* item` lines become a `<ul>`, `1. item` lines an `<ol>`. An item indented under
+      another one (2 or more spaces, or a tab, per level) starts a list inside that item's `<li>`;
+      bullets and numbers mix freely. Up to 4 levels: deeper indentation stays on the last one. A list
+      always starts on an unindented item, and a line indented by a single space is text.
     * everything else is text; newlines become `<br>`.
 
   ## Inline (within one line)
@@ -21,6 +24,12 @@ defmodule CampfireWeb.MessageBody do
     * `**bold**`, `***bold italic***`, `*italic*` / `_italic_`, `~~strike~~`, `==highlight==`
       (`<mark>`) and `` `code` ``. A marker must hug the text (`* a*` is not italic) and `_` /
       single `*` don't apply inside a word (`snake_case_name`).
+    * `[text](https://url)` becomes a link (`target="_blank" rel="noopener"`). The URL must be
+      absolute `http(s)://` with a host and contain no spaces; it may hold balanced parentheses
+      (`https://en.wikipedia.org/wiki/Elixir_(programming_language)`), so a `)` after the closing
+      one is the surrounding text's. Anything else (`javascript:`, `data:`, relative, a missing
+      `)`, empty text) stays literal, escaped text. The text can be formatted (bold, code, ...) but
+      holds no links, URLs or mentions of its own.
     * `http(s)://` URLs are linked (`target="_blank" rel="noopener"`), `@Name` mentions of the
       users in `mentioned_user_ids` are highlighted and linked to `/users/:id`. Both are taken out
       of the line before the formatting is applied, so neither is cut by a marker inside it, and
@@ -35,6 +44,7 @@ defmodule CampfireWeb.MessageBody do
       > quoted line
       — Author /rooms/1/@123
 
+  The quote is the message's source text, so links, lists and the rest are quoted as typed.
   Rendered, that is `<blockquote>quoted line</blockquote><cite>Author <a href="/rooms/1/@123">#</a></cite>`
   (the original Campfire's markup; `actiontext.css` adds the "— " before a `cite`). Only a trailing
   same-site message permalink (a path, or a URL on this endpoint's host) becomes the `#` link; any
@@ -62,9 +72,16 @@ defmodule CampfireWeb.MessageBody do
 
   @fence_regex ~r/\A```([\w+#.-]{0,30})[ \t]*\z/u
   @heading_regex ~r/\A# +(\S.*)\z/u
-  @bullet_regex ~r/\A[-*] +(\S.*)\z/u
-  @number_regex ~r/\A(\d{1,9})\. +(\S.*)\z/u
   @code_span_regex ~r/`[^`\n]+`/u
+  # A list item: indentation, `-`/`*` or `N.`, the text. Only unindented ones start a list.
+  @list_item_regex ~r/\A([ \t]*)(?:([-*])|(\d{1,9})\.) +(\S.*)\z/u
+  @max_list_depth 4
+
+  # `[text](url)`, the text without brackets and with something in it, the url absolute http(s) with
+  # a host and no spaces; parentheses in it come in balanced pairs (one level), so the first
+  # unbalanced `)` closes the link. Code spans and mentions are placeholders by then (the
+  # placeholder characters are excluded from the url, text can hold them).
+  @markdown_link_regex ~r|\[(?=[^\[\]\n]*\S)([^\[\]\n]+)\]\((https?://[^\s()<>"/?#\x{E000}\x{E001}][^\s()<>"\x{E000}\x{E001}]*(?:\([^\s()<>"\x{E000}\x{E001}]*\)[^\s()<>"\x{E000}\x{E001}]*)*)\)|u
 
   # Inline formatting, applied to escaped text in this order (`*` italic before bold, so that
   # `**a *b* c**` nests properly)
@@ -220,7 +237,7 @@ defmodule CampfireWeb.MessageBody do
 
   # Lines -> `[{block, raw_lines}]`, `raw_lines` being the lines the block was made of. Blocks:
   # `{:quote, lines}`, `{:cite, line}`, `{:code, language, lines}`, `{:heading, text}`,
-  # `{:ul, items}`, `{:ol, {start, items}}` and `{:text, lines}`. `quotes?` is false inside a
+  # `{:lists, [list]}` (see `parse_lists/1`) and `{:text, lines}`. `quotes?` is false inside a
   # quote: a nested quote is plain text, as in the original.
   defp parse([], _quotes?), do: []
 
@@ -246,15 +263,9 @@ defmodule CampfireWeb.MessageBody do
         [_, text] = Regex.run(@heading_regex, line)
         {[{{:heading, text}, [line]}], rest}
 
-      Regex.match?(@bullet_regex, line) ->
-        {raw, rest} = Enum.split_while(lines, &Regex.match?(@bullet_regex, &1))
-        items = Enum.map(raw, &(@bullet_regex |> Regex.run(&1) |> Enum.at(1)))
-        {[{{:ul, items}, raw}], rest}
-
-      Regex.match?(@number_regex, line) ->
-        {raw, rest} = Enum.split_while(lines, &Regex.match?(@number_regex, &1))
-        [{start, _} | _] = items = Enum.map(raw, &number_item/1)
-        {[{{:ol, {start, Enum.map(items, &elem(&1, 1))}}, raw}], rest}
+      list_start?(line) ->
+        {raw, rest} = Enum.split_while(lines, &(list_item(&1) != nil))
+        {[{{:lists, parse_lists(raw)}, raw}], rest}
 
       true ->
         {text, rest} = take_text(rest, quotes?, [line])
@@ -262,10 +273,86 @@ defmodule CampfireWeb.MessageBody do
     end
   end
 
-  defp number_item(line) do
-    [_, number, text] = Regex.run(@number_regex, line)
-    {String.to_integer(number), text}
+  # `{width, kind, number, text}` for a list item line, else nil. `kind` is `:ul` or `:ol` (with
+  # its number); a tab counts as two spaces. An indent of a single space is no indent at all, so
+  # " - x" isn't an item.
+  defp list_item(line) do
+    case Regex.run(@list_item_regex, line) do
+      [_, indent, _bullet, "", text] -> item(indent, :ul, nil, text)
+      [_, indent, "", number, text] -> item(indent, :ol, String.to_integer(number), text)
+      _ -> nil
+    end
   end
+
+  defp item(indent, kind, number, text) do
+    case indent_width(indent) do
+      1 -> nil
+      width -> {width, kind, number, text}
+    end
+  end
+
+  defp indent_width(indent) do
+    indent |> String.to_charlist() |> Enum.reduce(0, &(&2 + if(&1 == ?\t, do: 2, else: 1)))
+  end
+
+  defp list_start?(line), do: match?({0, _, _, _}, list_item(line))
+
+  # Item lines (the first one unindented) -> `[{:list, kind, start, items}]`, `items` being
+  # `[{text, nested_lists}]`. A list is the consecutive items of one kind at one level; another
+  # kind starts a new list right after it.
+  defp parse_lists(lines) do
+    {lists, []} =
+      lines
+      |> Enum.map(&list_item/1)
+      |> assign_levels()
+      |> build_lists(0)
+
+    lists
+  end
+
+  # `[{width, kind, number, text}]` -> `[{level, kind, number, text}]`. An item at least two wider
+  # than the previous one is a level deeper (at most @max_list_depth levels); a narrower one goes
+  # back to the level of that indentation (or the nearest deeper one).
+  defp assign_levels(items) do
+    {leveled, _stack} =
+      Enum.map_reduce(items, [], fn {width, kind, number, text}, stack ->
+        stack = next_levels(stack, width)
+        {{length(stack) - 1, kind, number, text}, stack}
+      end)
+
+    leveled
+  end
+
+  # The stack holds the widths of the open levels, the innermost first
+  defp next_levels([], width), do: [width]
+
+  defp next_levels([top | _] = stack, width) when width >= top + 2 do
+    if length(stack) < @max_list_depth, do: [width | stack], else: stack
+  end
+
+  # Narrower: back out to that level, or when it falls between two levels, to the deeper one
+  defp next_levels(stack, width) do
+    case Enum.split_while(stack, &(&1 > width)) do
+      {[], stack} -> stack
+      {_popped, [^width | _] = outer} -> outer
+      {popped, outer} -> [List.last(popped) | outer]
+    end
+  end
+
+  defp build_lists([{level, kind, number, _} | _] = items, level) do
+    {list_items, rest} = take_list_items(items, level, kind, [])
+    {more, rest} = build_lists(rest, level)
+    {[{:list, kind, number, list_items} | more], rest}
+  end
+
+  defp build_lists(items, _level), do: {[], items}
+
+  defp take_list_items([{level, kind, _, text} | rest], level, kind, acc) do
+    {children, rest} = build_lists(rest, level + 1)
+    take_list_items(rest, level, kind, [{text, children} | acc])
+  end
+
+  defp take_list_items(items, _level, _kind, acc), do: {Enum.reverse(acc), items}
 
   defp take_cite([line | rest] = lines) do
     if cite_line?(line),
@@ -298,8 +385,7 @@ defmodule CampfireWeb.MessageBody do
 
   defp block_start?([line | _] = lines, quotes?) do
     (quotes? and quote_line?(line)) or Regex.match?(@heading_regex, line) or
-      Regex.match?(@bullet_regex, line) or Regex.match?(@number_regex, line) or
-      match?({:ok, _, _}, take_fence(lines))
+      list_start?(line) or match?({:ok, _, _}, take_fence(lines))
   end
 
   # A block is a block: the blank line that only separates text from a heading, list or code block
@@ -325,7 +411,7 @@ defmodule CampfireWeb.MessageBody do
 
   defp tidy([block | rest], _previous), do: [block | tidy(rest, block)]
 
-  defp structural?(block) when is_tuple(block), do: elem(block, 0) in [:code, :heading, :ul, :ol]
+  defp structural?(block) when is_tuple(block), do: elem(block, 0) in [:code, :heading, :lists]
   defp structural?(_), do: false
 
   defp maybe_drop_blank(["" | rest], true, :first), do: rest
@@ -359,20 +445,25 @@ defmodule CampfireWeb.MessageBody do
 
   defp render_block({:heading, text}, ctx), do: ["<h1>", render_inline(text, ctx), "</h1>"]
 
-  defp render_block({:ul, items}, ctx), do: ["<ul>", list_items(items, ctx), "</ul>"]
-
-  defp render_block({:ol, {1, items}}, ctx), do: ["<ol>", list_items(items, ctx), "</ol>"]
-
-  defp render_block({:ol, {start, items}}, ctx) do
-    [~s(<ol start="#{start}">), list_items(items, ctx), "</ol>"]
-  end
+  defp render_block({:lists, lists}, ctx), do: Enum.map(lists, &render_list(&1, ctx))
 
   defp render_block({:code, language, lines}, _ctx) do
     attr = if language == "", do: "", else: [~s( data-language="), escape(language), ~s(")]
     ["<pre", attr, "><code>", escape(Enum.join(lines, "\n")), "</code></pre>"]
   end
 
-  defp list_items(items, ctx), do: Enum.map(items, &["<li>", render_inline(&1, ctx), "</li>"])
+  defp render_list({:list, :ul, _, items}, ctx), do: ["<ul>", list_items(items, ctx), "</ul>"]
+  defp render_list({:list, :ol, 1, items}, ctx), do: ["<ol>", list_items(items, ctx), "</ol>"]
+
+  defp render_list({:list, :ol, start, items}, ctx) do
+    [~s(<ol start="#{start}">), list_items(items, ctx), "</ol>"]
+  end
+
+  defp list_items(items, ctx) do
+    Enum.map(items, fn {text, nested} ->
+      ["<li>", render_inline(text, ctx), Enum.map(nested, &render_list(&1, ctx)), "</li>"]
+    end)
+  end
 
   # `— Author /rooms/1/@123` -> `<cite>Author <a href="/rooms/1/@123">#</a></cite>`. Without a
   # same-site permalink at the end, the whole text is the (escaped) citation.
@@ -403,14 +494,16 @@ defmodule CampfireWeb.MessageBody do
 
   ## Inline: code, links, mentions, formatting
 
-  # 1. Code spans, URLs and mentions are replaced by placeholders (in that order, so code is never
-  #    linked or resolved), 2. the rest is escaped and the formatting applied, 3. the placeholders
-  #    are replaced by their HTML.
+  # 1. Code spans, `[text](url)` links, bare URLs and mentions are replaced by placeholders (in that
+  #    order, so code is never linked or resolved and a URL inside a link isn't linked again),
+  #    2. the rest is escaped and the formatting applied, 3. the placeholders are replaced by their
+  #    HTML.
   defp render_inline(line, ctx) do
     {text, slots} =
       {String.replace(line, ~r/[\x{E000}\x{E001}]/u, ""), %{}}
-      |> protect(@code_span_regex, &code_span/1)
-      |> protect(@url_regex, &link/1)
+      |> protect(@code_span_regex, fn match, _slots -> code_span(match) end)
+      |> protect(@markdown_link_regex, &markdown_link/2)
+      |> protect(@url_regex, fn match, _slots -> link(match) end)
       |> protect_mentions(ctx)
 
     text
@@ -419,6 +512,7 @@ defmodule CampfireWeb.MessageBody do
     |> restore(slots)
   end
 
+  # `render` gets the match and the slots so far and returns the HTML, or nil to leave the match
   defp protect({text, slots}, regex, render) do
     {parts, slots} =
       regex
@@ -426,8 +520,14 @@ defmodule CampfireWeb.MessageBody do
       |> Enum.with_index()
       |> Enum.map_reduce(slots, fn
         {match, i}, slots when rem(i, 2) == 1 ->
-          index = map_size(slots)
-          {"\u{E000}#{index}\u{E001}", Map.put(slots, index, render.(match))}
+          case render.(match, slots) do
+            nil ->
+              {match, slots}
+
+            html ->
+              index = map_size(slots)
+              {"\u{E000}#{index}\u{E001}", Map.put(slots, index, html)}
+          end
 
         {text, _}, slots ->
           {text, slots}
@@ -438,7 +538,7 @@ defmodule CampfireWeb.MessageBody do
 
   defp protect_mentions(acc, %{mentioned: mentioned} = ctx) do
     Enum.reduce(mentioned, acc, fn user, acc ->
-      protect(acc, Mentions.mention_regex(user.name), fn _match -> mention(user, ctx) end)
+      protect(acc, Mentions.mention_regex(user.name), fn _match, _slots -> mention(user, ctx) end)
     end)
   end
 
@@ -463,6 +563,24 @@ defmodule CampfireWeb.MessageBody do
   defp link(url) do
     escaped = escape(url)
     [~s(<a href="), escaped, ~s(" target="_blank" rel="noopener">), escaped, "</a>"]
+  end
+
+  # `[text](url)`: the text is formatted like the rest of the line (code spans in it are already
+  # slots), but has no links or mentions of its own: its URLs and mentions stay plain text.
+  defp markdown_link(match, slots) do
+    [_, text, url] = Regex.run(@markdown_link_regex, match)
+
+    if http_url?(url) do
+      inner = text |> escape() |> format() |> restore(slots)
+      [~s(<a href="), escape(url), ~s(" target="_blank" rel="noopener">), inner, "</a>"]
+    end
+  end
+
+  defp http_url?(url) do
+    match?(
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and host not in [nil, ""],
+      URI.parse(url)
+    )
   end
 
   # The original's `users/_mention`: the avatar links to the profile, the name follows.

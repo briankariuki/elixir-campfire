@@ -300,6 +300,80 @@ defmodule CampfireWeb.MessageBodyTest do
       end
     end
 
+    test "indented items nest lists inside the parent item" do
+      assert html("- a\n  - b\n  - c\n- d") ==
+               wrapped("<ul><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ul>")
+
+      assert html("- a\n\t- b") == wrapped("<ul><li>a<ul><li>b</li></ul></li></ul>")
+      assert html("- a\n    - b") == wrapped("<ul><li>a<ul><li>b</li></ul></li></ul>")
+
+      assert html("- a\n  * b *i*") ==
+               wrapped("<ul><li>a<ul><li>b <em>i</em></li></ul></li></ul>")
+    end
+
+    test "bullets and numbers nest in each other" do
+      assert html("1. a\n  - b\n  - c\n2. d") ==
+               wrapped("<ol><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ol>")
+
+      assert html("- a\n  3. b\n  4. c") ==
+               wrapped(~s(<ul><li>a<ol start="3"><li>b</li><li>c</li></ol></li></ul>))
+
+      # another kind at the same level starts another list next to it
+      assert html("- a\n  1. b\n  - c") ==
+               wrapped("<ul><li>a<ol><li>b</li></ol><ul><li>c</li></ul></li></ul>")
+    end
+
+    test "up to four levels, deeper indentation stays on the last one" do
+      assert html("- 1\n  - 2\n    - 3\n      - 4\n        - 5\n          - 6\n  - back") ==
+               wrapped(
+                 "<ul><li>1<ul><li>2<ul><li>3<ul><li>4</li><li>5</li><li>6</li></ul></li></ul></li>" <>
+                   "<li>back</li></ul></li></ul>"
+               )
+
+      assert html("- a\n          - b") == wrapped("<ul><li>a<ul><li>b</li></ul></li></ul>")
+    end
+
+    test "dedenting goes back to a level, an uneven one to the deeper level" do
+      assert html("- a\n    - b\n  - c\n- d") ==
+               wrapped("<ul><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ul>")
+
+      assert html("- a\n  - b\n    - c\n  - d\n- e") ==
+               wrapped(
+                 "<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>"
+               )
+    end
+
+    test "a list starts on an unindented item, one space is no indent" do
+      for text <- ["  - a", "\t- a", "text\n  - a", " - a"] do
+        refute html(text) =~ "<li", text
+      end
+
+      assert html("- a\n - b") == wrapped("<ul><li>a</li></ul> - b")
+    end
+
+    test "nested lists work in quotes, and replies quote them as typed" do
+      assert html("> - a\n>   1. b\n> - c") ==
+               wrapped(
+                 "<blockquote><ul><li>a<ol><li>b</li></ol></li><li>c</li></ul></blockquote>"
+               )
+
+      author = user_fixture(name: "Ann Smith")
+
+      text =
+        MessageBody.reply_text(%{
+          id: 7,
+          room_id: 3,
+          body: "- a\n  - b",
+          mentioned_user_ids: [],
+          creator: author
+        })
+
+      assert text == "> - a\n>   - b\n— Ann Smith /rooms/3/@7\n\n"
+
+      assert html(text <> "ok") =~
+               "<blockquote><ul><li>a<ul><li>b</li></ul></li></ul></blockquote>"
+    end
+
     test "no <br> or empty line around blocks, but blank lines elsewhere stay" do
       assert html("intro\n\n- a\n\nafter") == wrapped("intro<ul><li>a</li></ul>after")
       assert html("a\n\nb") == wrapped("a<br><br>b")
@@ -340,6 +414,135 @@ defmodule CampfireWeb.MessageBodyTest do
                  "<blockquote><strong>bold</strong> and <code>code</code></blockquote>" <>
                    ~s(<cite>Ann <a href="/rooms/1/@2">#</a></cite>reply)
                )
+    end
+  end
+
+  describe "links" do
+    defp link(href, text), do: ~s(<a href="#{href}" target="_blank" rel="noopener">#{text}</a>)
+
+    test "[text](url) becomes a link that opens in a new tab" do
+      assert html("[Elixir](https://elixir-lang.org)") ==
+               wrapped(link("https://elixir-lang.org", "Elixir"))
+
+      assert html("go [here](http://x.com/a?b=1) now") ==
+               wrapped("go " <> link("http://x.com/a?b=1", "here") <> " now")
+    end
+
+    test "the href is escaped" do
+      assert html("[a](https://x.com/?a=1&b='2')") ==
+               wrapped(link("https://x.com/?a=1&amp;b=&#39;2&#39;", "a"))
+
+      # a quote ends the URL, so it can't break out of the attribute: it isn't a link at all
+      result = html(~S|[a](https://x.com/"onclick="alert(1))|)
+      refute result =~ ~S|onclick="|
+      refute result =~ ">a</a>"
+    end
+
+    test "only absolute http(s) URLs with a host are links" do
+      for text <- [
+            "[a](javascript:alert(1))",
+            "[a](JavaScript:alert(1))",
+            "[a](data:text/html,x)",
+            "[a](vbscript:x)",
+            "[a](//x.com)",
+            "[a](/rooms/1)",
+            "[a](x.com)",
+            "[a](ftp://x.com)",
+            "[a](https://)",
+            "[a](https:///path)",
+            "[a](https:x.com)",
+            "[a]( https://x.com)",
+            "[a](https://x.com",
+            "[a] (https://x.com)",
+            "[](https://x.com)",
+            "[ ](https://x.com)",
+            "[a(https://x.com)"
+          ] do
+        result = html(text)
+        refute result =~ ~S|href="javascript|, text
+        refute result =~ ~S|href="data|, text
+        refute result =~ ~S|href="vbscript|, text
+        refute result =~ ">a</a>", text
+        refute result =~ "<a></a>", text
+      end
+
+      assert html("[a](javascript:alert(1))") == wrapped("[a](javascript:alert(1))")
+      assert html("[a](/rooms/1)") == wrapped("[a](/rooms/1)")
+      assert html("[a](data:text/html,<b>)") == wrapped("[a](data:text/html,&lt;b&gt;)")
+      assert html("[](https://)") == wrapped("[](https://)")
+    end
+
+    test "the text is formatted, and may hold code, but is no link, URL or mention" do
+      ann = user_fixture(name: "Ann")
+      opts = [mentioned: [ann.id], users: %{ann.id => ann}]
+
+      assert html("[**bold** _it_ ~~s~~ ==h== `a_b`](https://x.com)") ==
+               wrapped(
+                 link(
+                   "https://x.com",
+                   "<strong>bold</strong> <em>it</em> <s>s</s> <mark>h</mark> <code>a_b</code>"
+                 )
+               )
+
+      assert html("**[a](https://x.com)**") ==
+               wrapped("<strong>" <> link("https://x.com", "a") <> "</strong>")
+
+      # not linked twice, and the mention is plain text
+      assert html("[https://a.com](https://b.com)") ==
+               wrapped(link("https://b.com", "https://a.com"))
+
+      assert html("[@Ann](https://x.com)", opts) == wrapped(link("https://x.com", "@Ann"))
+      assert html("[a [b](https://x.com)](https://y.com)") =~ link("https://x.com", "b")
+    end
+
+    test "balanced parentheses belong to the URL, an extra closing one to the text" do
+      wiki = "https://en.wikipedia.org/wiki/Elixir_(programming_language)"
+
+      assert html("[Elixir](#{wiki})") == wrapped(link(wiki, "Elixir"))
+      assert html("(see [Elixir](#{wiki}))") == wrapped("(see " <> link(wiki, "Elixir") <> ")")
+      assert html("([a](https://x.com/a))") == wrapped("(" <> link("https://x.com/a", "a") <> ")")
+      assert html("[a](https://x.com/(b)(c)/d)") == wrapped(link("https://x.com/(b)(c)/d", "a"))
+      assert html("[a](https://x.com/a)).") == wrapped(link("https://x.com/a", "a") <> ").")
+
+      # unbalanced: not a link, the bare URL is autolinked up to its last character
+      assert html("[a](https://x.com/(b)") =~ "[a]("
+      refute html("[a](https://x.com/(b)") =~ ~s(">a</a>)
+    end
+
+    test "links are not made in code, and a bare URL is still autolinked" do
+      assert html("`[a](https://x.com)`") == wrapped("<code>[a](https://x.com)</code>")
+
+      assert html("```\n[a](https://x.com)\n```") ==
+               wrapped("<pre><code>[a](https://x.com)</code></pre>")
+
+      assert html("[a](https://x.com) and https://y.com") ==
+               wrapped(
+                 link("https://x.com", "a") <> " and " <> link("https://y.com", "https://y.com")
+               )
+    end
+
+    test "links work in headings, lists and quotes" do
+      assert html("# [a](https://x.com)\n- [b](https://y.com)\n> [c](https://z.com)") ==
+               wrapped(
+                 "<h1>#{link("https://x.com", "a")}</h1><ul><li>#{link("https://y.com", "b")}</li></ul>" <>
+                   "<blockquote>#{link("https://z.com", "c")}</blockquote>"
+               )
+    end
+
+    test "replies quote the source text of a link" do
+      author = user_fixture(name: "Ann Smith")
+
+      text =
+        MessageBody.reply_text(%{
+          id: 7,
+          room_id: 3,
+          body: "see [docs](https://x.com/a_(b)) now",
+          mentioned_user_ids: [],
+          creator: author
+        })
+
+      assert text == "> see [docs](https://x.com/a_(b)) now\n— Ann Smith /rooms/3/@7\n\n"
+      assert html(text <> "ok") =~ ~S|<blockquote>see <a href="https://x.com/a_(b)"|
     end
   end
 

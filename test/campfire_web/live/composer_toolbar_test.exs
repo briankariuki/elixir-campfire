@@ -54,11 +54,42 @@ defmodule CampfireWeb.ComposerToolbarTest do
       {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
 
       for format <-
-            ~w(bold italic strike highlight code codeblock heading quote bullet number) do
+            ~w(bold italic strike highlight code codeblock heading quote bullet number link) do
         assert has_element?(
                  view,
-                 ~s(#composer-toolbar button.composer__format-btn[type=button][data-format="#{format}"][aria-label])
+                 ~s(#composer-toolbar button.composer__format-btn[type=button][data-format="#{format}"][aria-label][title])
                )
+      end
+    end
+
+    test "the buttons show a plain SVG icon, which the dark mode inverts, and no text glyph", %{
+      conn: conn,
+      room: room
+    } do
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      for {format, icon} <- [
+            {"bold", "format-bold.svg"},
+            {"italic", "format-italic.svg"},
+            {"strike", "format-strike.svg"},
+            {"highlight", "format-highlight.svg"},
+            {"code", "format-code.svg"},
+            {"codeblock", "format-code-block.svg"},
+            {"heading", "format-heading.svg"},
+            {"quote", "format-quote.svg"},
+            {"bullet", "format-bullets.svg"},
+            {"number", "format-numbers.svg"},
+            {"link", "link.svg"}
+          ] do
+        # `.btn img:not([class])` is what inverts the icon in dark mode
+        assert has_element?(
+                 view,
+                 ~s|#composer-toolbar button[data-format="#{format}"] img:not([class])[src*="/images/#{icon}"][aria-hidden=true]|
+               )
+
+        refute has_element?(view, ~s(#composer-toolbar button[data-format="#{format}"] span))
+
+        assert File.exists?(Path.join("priv/static/images", icon))
       end
     end
 
@@ -94,6 +125,29 @@ defmodule CampfireWeb.ComposerToolbarTest do
       assert has_element?(view, ".lexxy-content pre code", ~s(puts "<b>" **raw**))
       refute has_element?(view, ".lexxy-content pre strong")
       refute has_element?(view, ".lexxy-content pre b")
+
+      assert [%{body: ^body}] = Campfire.Chat.page_messages!(room.id, actor: user)
+    end
+
+    test "links and nested lists are rendered", %{conn: conn, user: user, room: room} do
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+
+      body =
+        "See [the **docs**](https://elixir-lang.org/docs?a=1&b=2) and [bad](javascript:alert(1))\n" <>
+          "- one\n  - two\n    1. three\n- four"
+
+      view |> form("#composer", %{body: body}) |> render_submit()
+
+      assert has_element?(
+               view,
+               ~s(.lexxy-content a[href="https://elixir-lang.org/docs?a=1&b=2"][target=_blank][rel=noopener] strong),
+               "docs"
+             )
+
+      refute has_element?(view, ~s(.lexxy-content a[href^="javascript"]))
+      assert has_element?(view, ".lexxy-content", "[bad](javascript:alert(1))")
+      assert has_element?(view, ".lexxy-content ul > li > ul > li > ol > li", "three")
+      assert has_element?(view, ".lexxy-content ul > li", "four")
 
       assert [%{body: ^body}] = Campfire.Chat.page_messages!(room.id, actor: user)
     end

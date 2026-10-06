@@ -12,7 +12,9 @@ config :ash_oban, pro?: false
 config :campfire, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [default: 10, webhooks: 10],
+  # embeds: link previews fetch other sites, so they get their own lane and can't hold up
+  # webhooks or ban cleanup (and vice versa)
+  queues: [default: 10, webhooks: 10, embeds: 5],
   lifeline: [rescue_after: {2, :hours}],
   pruner: [max_age: {1, :day}],
   repo: Campfire.Repo,

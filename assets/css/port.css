@@ -162,25 +162,6 @@ body > [data-phx-session] {
     cursor: not-allowed;
     opacity: 0.5;
   }
-
-  &[data-format="bold"] span { font-weight: 900; }
-  &[data-format="italic"] span { font-style: italic; font-weight: 500; }
-  &[data-format="strike"] span { text-decoration: line-through; }
-
-  &[data-format="highlight"] span {
-    background: #ffe14d;
-    border-radius: 0.2em;
-    color: #000;
-    padding-inline: 0.25em;
-  }
-
-  &[data-format="code"] span,
-  &[data-format="codeblock"] span {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.85em;
-  }
-
-  &[data-format="heading"] span { font-size: 0.9em; font-weight: 800; }
 }
 
 /* `mark` in a message: the stylesheet has no rule, so the browser's default would be used */

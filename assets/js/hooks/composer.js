@@ -16,8 +16,10 @@
 //   open Enter/Tab insert, ArrowUp/ArrowDown move and Escape closes, so none of them send or edit.
 // - Formatting toolbar (composer_toolbar.js; `#<data-toolbar>` opened by `#<data-toolbar-toggle>`): the
 //   buttons insert the Markdown-like syntax MessageBody renders (bold, italic, strike, highlight,
-//   code, code block, heading, quote, lists); Cmd/Ctrl+B and Cmd/Ctrl+I work without it. While the
-//   toolbar is open Enter inserts a newline and only Cmd/Ctrl+Enter sends (like the original).
+//   code, code block, heading, quote, lists, link); Cmd/Ctrl+B and Cmd/Ctrl+I work without it. While
+//   the toolbar is open Enter inserts a newline and only Cmd/Ctrl+Enter sends (like the original),
+//   and Tab / Shift+Tab indent / outdent a list line. The @mention menu handles its keys first, so
+//   Tab picks a mention while it is open.
 // - Handles the server's "composer:reset" push_event: clear, resize and refocus.
 // - Handles "composer:insert" {text}: prepends text (a reply quote) and focuses after it.
 

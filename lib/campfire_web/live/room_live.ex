@@ -712,19 +712,21 @@ defmodule CampfireWeb.RoomLive do
     """
   end
 
-  # The formatting toolbar (composer_toolbar.js): {format, label, glyph}. Shown by the rich text button.
+  # The formatting toolbar (composer_toolbar.js): {format, label, icon}, the icon being a monochrome
+  # SVG file in priv/static/images. Shown by the rich text button.
   defp format_buttons do
     [
-      {"bold", "Bold", "B"},
-      {"italic", "Italic", "I"},
-      {"strike", "Strikethrough", "S"},
-      {"highlight", "Highlight", "H"},
-      {"code", "Code", "</>"},
-      {"codeblock", "Code block", "{ }"},
-      {"heading", "Heading", "H1"},
-      {"quote", "Quote", "“"},
-      {"bullet", "Bulleted list", "•"},
-      {"number", "Numbered list", "1."}
+      {"bold", "Bold", "format-bold.svg"},
+      {"italic", "Italic", "format-italic.svg"},
+      {"strike", "Strikethrough", "format-strike.svg"},
+      {"highlight", "Highlight", "format-highlight.svg"},
+      {"code", "Code", "format-code.svg"},
+      {"codeblock", "Code block", "format-code-block.svg"},
+      {"heading", "Heading", "format-heading.svg"},
+      {"quote", "Quote", "format-quote.svg"},
+      {"bullet", "Bulleted list", "format-bullets.svg"},
+      {"number", "Numbered list", "format-numbers.svg"},
+      {"link", "Link", "link.svg"}
     ]
   end
 
@@ -815,14 +817,14 @@ defmodule CampfireWeb.RoomLive do
                     hidden
                   >
                     <button
-                      :for={{format, label, glyph} <- format_buttons()}
+                      :for={{format, label, icon} <- format_buttons()}
                       type="button"
                       class="btn btn--borderless composer__format-btn"
                       data-format={format}
                       title={label}
                       aria-label={label}
                     >
-                      <span aria-hidden="true">{glyph}</span>
+                      <img src={~p"/images/#{icon}"} width="20" height="20" aria-hidden="true" />
                     </button>
                   </div>
                 </div>

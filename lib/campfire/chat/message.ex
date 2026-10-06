@@ -76,7 +76,7 @@ defmodule Campfire.Chat.Message do
       # One job per message with a link: `Notifiers.EnqueueEmbed` enqueues it after commit.
       trigger :fetch_embed do
         action :fetch_embed
-        queue :default
+        queue :embeds
         scheduler_cron false
         # A link that can't be previewed isn't an error: the job completes without an embed.
         max_attempts 1
