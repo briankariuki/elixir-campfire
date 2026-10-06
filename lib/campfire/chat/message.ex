@@ -93,6 +93,34 @@ defmodule Campfire.Chat.Message do
       run &Campfire.Chat.Pagination.run/2
     end
 
+    read :in_room do
+      description """
+      Messages in a room, ascending by (inserted_at, id), with creator and boosts loaded.
+      Keyset-paginated: `page: [before: keyset | after: keyset, limit: n]`, the keyset being the
+      `:keyset` metadata of a record. `page` is built on it.
+      """
+
+      argument :room_id, :integer, allow_nil?: false
+      filter expr(room_id == ^arg(:room_id))
+      prepare build(sort: [inserted_at: :asc, id: :asc], load: @loads)
+
+      pagination keyset?: true,
+                 default_limit: @page_size,
+                 max_page_size: @page_size,
+                 required?: false
+    end
+
+    read :latest_in_room do
+      description """
+      The newest 40 messages in a room, *descending* (`page` reverses them). Keyset pagination
+      has no "last page", so the newest page is a descending read with a limit.
+      """
+
+      argument :room_id, :integer, allow_nil?: false
+      filter expr(room_id == ^arg(:room_id))
+      prepare build(sort: [inserted_at: :desc, id: :desc], limit: @page_size, load: @loads)
+    end
+
     read :search do
       description "The last 100 messages in the actor's rooms matching the query, ascending."
       argument :query, :string, allow_nil?: false

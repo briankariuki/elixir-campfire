@@ -2,14 +2,14 @@ defmodule CampfireWeb.BotJSON do
   @moduledoc "JSON shapes of the bot API (docs/PORTING.md §5)."
 
   alias Campfire.Chat.Message
-  alias CampfireWeb.{Endpoint, Paths}
+  alias CampfireWeb.{Endpoint, MessageBody, Paths}
 
   @doc "A message (with `:creator` loaded)."
   def message(message) do
     %{
       id: message.id,
       created_at: timestamp(message.inserted_at),
-      body: %{plain_text: Message.plain_text(message), html: body_html(message)},
+      body: %{plain_text: Message.plain_text(message), html: MessageBody.to_html_string(message)},
       creator: user(message.creator),
       room: %{id: message.room_id},
       url: Endpoint.url() <> Paths.message_path(message)
@@ -39,10 +39,4 @@ defmodule CampfireWeb.BotJSON do
   defp timestamp(datetime) do
     datetime |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
   end
-
-  defp body_html(%{body: body} = message) when is_binary(body) and body != "" do
-    message |> CampfireWeb.MessageBody.to_html() |> Phoenix.HTML.safe_to_string()
-  end
-
-  defp body_html(_message), do: ""
 end

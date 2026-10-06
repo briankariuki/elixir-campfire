@@ -47,8 +47,23 @@ defmodule CampfireWeb.AccountLive do
     update_account(socket, %{logo_key: nil})
   end
 
-  def handle_event("save_name", %{"account" => %{"name" => name}}, socket) do
-    update_account(socket, %{name: name}, "Saved")
+  def handle_event("validate_name", %{"account" => params} = event, socket) do
+    form = AshPhoenix.Form.validate(socket.assigns.form, params, target: event["_target"] || [])
+    {:noreply, assign(socket, form: form)}
+  end
+
+  def handle_event("save_name", %{"account" => params}, socket) do
+    case AshPhoenix.Form.submit(socket.assigns.form, params: params) do
+      {:ok, account} ->
+        {:noreply, socket |> assign_account(account) |> put_flash(:info, "Saved")}
+
+      {:error, form} ->
+        socket = assign(socket, form: form)
+
+        if ErrorMessages.forbidden?(form),
+          do: {:noreply, error_flash(socket, %Ash.Error.Forbidden{})},
+          else: {:noreply, socket}
+    end
   end
 
   def handle_event("toggle_restrict", _params, socket) do
@@ -105,13 +120,14 @@ defmodule CampfireWeb.AccountLive do
     end
   end
 
-  defp update_account(socket, attrs, notice \\ nil) do
+  # The logo and the restrict switch save on their own (an upload callback and a click), so they
+  # call the code interface instead of the name form.
+  defp update_account(socket, attrs) do
     case Accounts.update_account(socket.assigns.account, attrs,
            actor: socket.assigns.current_user
          ) do
       {:ok, account} ->
-        socket = assign_account(socket, account)
-        {:noreply, if(notice, do: put_flash(socket, :info, notice), else: socket)}
+        {:noreply, assign_account(socket, account)}
 
       {:error, error} ->
         Campfire.Uploads.delete(attrs[:logo_key])
@@ -122,9 +138,18 @@ defmodule CampfireWeb.AccountLive do
   defp error_flash(socket, error), do: put_flash(socket, :error, ErrorMessages.summary(error))
 
   defp assign_account(socket, account) do
+    form =
+      account
+      |> AshPhoenix.Form.for_update(:update,
+        actor: socket.assigns.current_user,
+        as: "account",
+        warn_on_unhandled_errors?: false
+      )
+      |> to_form()
+
     assign(socket,
       account: account,
-      name_form: to_form(%{"name" => account.name}, as: :account),
+      form: form,
       invite_url: url(~p"/join/#{account.join_code}")
     )
   end
@@ -185,19 +210,18 @@ defmodule CampfireWeb.AccountLive do
           </div>
 
           <.form
-            for={@name_form}
+            for={@form}
             id="account-name-form"
+            phx-change="validate_name"
             phx-submit="save_name"
             class="flex flex-column gap"
           >
             <div class="flex align-center gap">
               <label class="flex align-center gap flex-item-grow">
                 <span class="for-screen-reader">Account name</span>
-                <input
-                  type="text"
-                  name={@name_form[:name].name}
-                  value={@name_form[:name].value}
-                  class="input txt-large"
+                <.input
+                  field={@form[:name]}
+                  class="txt-large"
                   autocomplete="off"
                   placeholder="Name this account"
                   required

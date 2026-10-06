@@ -39,6 +39,7 @@ defmodule Campfire.Chat.Room do
 
     create :create_open do
       accept [:name]
+      validate present(:name), message: "can't be blank"
       change set_attribute(:kind, :open)
       change relate_actor(:creator)
       change Changes.GrantActiveUsers
@@ -48,6 +49,7 @@ defmodule Campfire.Chat.Room do
     create :create_closed do
       accept [:name]
       argument :user_ids, {:array, :integer}, default: []
+      validate present(:name), message: "can't be blank"
       change set_attribute(:kind, :closed)
       change relate_actor(:creator)
       change Changes.ReviseMembers
@@ -74,6 +76,7 @@ defmodule Campfire.Chat.Room do
 
     update :update_open do
       accept [:name]
+      validate present(:name), message: "can't be blank"
 
       validate attribute_does_not_equal(:kind, :direct),
         message: "can't be changed for a direct room"
@@ -86,6 +89,7 @@ defmodule Campfire.Chat.Room do
     update :update_closed do
       accept [:name]
       argument :user_ids, {:array, :integer}, default: []
+      validate present(:name), message: "can't be blank"
 
       validate attribute_does_not_equal(:kind, :direct),
         message: "can't be changed for a direct room"
