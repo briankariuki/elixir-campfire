@@ -105,3 +105,20 @@ body > [data-phx-session] {
 .composer__input textarea:disabled {
   cursor: not-allowed;
 }
+
+/* Group Ping avatars in the sidebar. sidebar.css resets `.direct .avatar__group .avatar` to
+   `margin-inline: 0`, which outranks avatars.css's `:where(:has(…))` layouts, so two faces sat side
+   by side (and a third bottom-left) instead of overlapping like the original. Restore the overlap. */
+.direct .avatar__group:has(> :last-child:nth-child(2)) {
+  > :first-child {
+    margin-inline-end: -0.75ch;
+  }
+
+  > :last-child {
+    margin-inline-start: -0.75ch;
+  }
+}
+
+.direct .avatar__group:has(> :last-child:nth-child(3)) > :last-child {
+  margin-inline: 1.25ch -1.25ch;
+}
