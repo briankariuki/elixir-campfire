@@ -1,0 +1,12 @@
+{
+ "clients": 500,
+ "rate": 20,
+ "secs": 10,
+ "image": "campfire-port:baseline",
+ "cpu": {
+  "targeted": {
+   "app_cpu_s": 19.085364,
+   "db_cpu_s": 0.175652
+  }
+ }
+}

@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Check bench/seed/default against our app, end to end, in throwaway containers.
+
+    bench/seed/verify [--image campfire-port:bench] [--seed bench/seed/default]
+
+Starts Postgres 17, runs the app image's `bin/migrate`, loads campfire.sql, compares row counts
+with the SQLite counts the importer recorded (counts.json), checks that every users/rooms/messages/...
+id in labels.json exists, then boots the image on the data and (as the benchmark does) signs in
+as labels `emails.david` / `passwords.all` and GETs the busy room. Everything is removed at the end.
+Needs Docker and the app image (`docker build -t campfire-port:bench .` at the repo root).
+"""
+
+import argparse
+import http.cookiejar
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TABLES = ["accounts", "users", "rooms", "memberships", "messages", "boosts", "searches", "sessions",
+          "bans", "webhooks"]
+# labels.json prefixes whose ids are rows of one of our tables
+LABEL_TABLES = {"accounts": "accounts", "users": "users", "rooms": "rooms", "memberships": "memberships",
+                "messages": "messages", "boosts": "boosts", "searches": "searches",
+                "sessions": "sessions", "bans": "bans", "webhooks": "webhooks"}
+
+
+def sh(*cmd, check=True, **kw):
+    return subprocess.run(cmd, check=check, text=True, capture_output=True, **kw)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--image", default="campfire-port:bench")
+    ap.add_argument("--seed", default=os.path.join(HERE, "default"))
+    ap.add_argument("--port", type=int, default=4310)
+    args = ap.parse_args()
+
+    run_id = secrets.token_hex(3)
+    net, pg, app = f"cfverify-{run_id}", f"cfverify-pg-{run_id}", f"cfverify-app-{run_id}"
+    failures = []
+
+    def check(ok, what):
+        print(("  ok   " if ok else "  FAIL ") + what)
+        if not ok:
+            failures.append(what)
+
+    def psql(query):
+        return sh("docker", "exec", pg, "psql", "-U", "campfire", "-Atc", query).stdout.strip()
+
+    env = ["-e", f"DATABASE_URL=ecto://campfire:pw@{pg}/campfire", "-e", f"SECRET_KEY_BASE={secrets.token_hex(48)}",
+           "-e", "UPLOADS_DIR=/data/uploads", "-e", "PHX_HOST=localhost"]
+    try:
+        sh("docker", "network", "create", net)
+        sh("docker", "run", "-d", "--name", pg, "--network", net, "-e", "POSTGRES_USER=campfire",
+           "-e", "POSTGRES_PASSWORD=pw", "-e", "POSTGRES_DB=campfire", "postgres:17")
+        for _ in range(60):
+            if sh("docker", "exec", pg, "pg_isready", "-U", "campfire", "-d", "campfire", check=False).returncode == 0:
+                time.sleep(1)  # the init script restarts the server once
+                if sh("docker", "exec", pg, "pg_isready", "-U", "campfire", check=False).returncode == 0:
+                    break
+            time.sleep(1)
+
+        print("migrate")
+        sh("docker", "run", "--rm", "--network", net, *env, args.image, "/app/bin/migrate")
+        print("load campfire.sql")
+        with open(os.path.join(args.seed, "campfire.sql"), "rb") as f:
+            r = subprocess.run(["docker", "exec", "-i", pg, "psql", "-U", "campfire", "-v", "ON_ERROR_STOP=1", "-q"],
+                               stdin=f, capture_output=True, text=True)
+        check(r.returncode == 0 and not r.stderr.strip(), "campfire.sql loads without errors" + (f": {r.stderr[:300]}" if r.stderr else ""))
+
+        print("row counts (SQLite -> Postgres)")
+        counts = json.load(open(os.path.join(args.seed, "counts.json")))
+        skipped = {}
+        for s in counts["skipped"]:
+            skipped[s["table"]] = skipped.get(s["table"], 0) + 1
+        for t in TABLES:
+            pg_n = int(psql(f"select count(*) from {t}"))
+            want = counts["sqlite"][t] - skipped.get(t, 0)
+            check(pg_n == want, f"{t:12} sqlite {counts['sqlite'][t]:>4} (skipped {skipped.get(t, 0)}) -> postgres {pg_n}")
+        uploads = len(os.listdir(os.path.join(args.seed, "uploads")))
+        check(uploads == counts["uploads"], f"uploads dir has {uploads} files")
+
+        print("labels.json ids")
+        labels = json.load(open(os.path.join(args.seed, "labels.json")))
+        dropped = {(s["table"], s["id"]) for s in counts["skipped"]}
+        missing = []
+        for label, value in labels.items():
+            prefix = label.split(".")[0]
+            if prefix in LABEL_TABLES and isinstance(value, int) and (LABEL_TABLES[prefix], value) not in dropped:
+                if psql(f"select count(*) from {LABEL_TABLES[prefix]} where id = {value}") != "1":
+                    missing.append(label)
+        check(not missing, f"every labelled id exists {missing[:5] if missing else ''}")
+        dropped_labels = [l for l, v in labels.items() if l.split(".")[0] in LABEL_TABLES and (LABEL_TABLES[l.split('.')[0]], v) in dropped]
+        print(f"  note labels of skipped rows: {dropped_labels}")
+        for t in ("users", "rooms", "messages"):
+            check(int(psql(f"select last_value from {t}_id_seq")) >= int(psql(f"select max(id) from {t}")), f"{t}_id_seq is past max(id)")
+
+        print("sign in + busy room")
+        sh("docker", "run", "-d", "--name", app, "--network", net, "-p", f"127.0.0.1:{args.port}:4000", *env,
+           "-v", f"{os.path.abspath(os.path.join(args.seed, 'uploads'))}:/data/uploads:ro", args.image)
+        base = f"http://127.0.0.1:{args.port}"
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(base + "/up", timeout=2)
+                break
+            except (urllib.error.URLError, ConnectionError, OSError):
+                time.sleep(1)
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):
+                return None
+
+        no_redirect = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), NoRedirect)
+        page = opener.open(base + "/session/new").read().decode()
+        csrf = re.search(r'name="_csrf_token"[^>]*value="([^"]+)"', page) or re.search(r'value="([^"]+)"[^>]*name="_csrf_token"', page)
+        form = urllib.parse.urlencode({"_csrf_token": csrf.group(1), "email_address": labels["emails.david"],
+                                       "password": labels["passwords.all"]}).encode()
+        try:
+            r = no_redirect.open(base + "/session", form)
+            status = r.status
+        except urllib.error.HTTPError as e:
+            status = e.code
+        check(status == 302, f"POST /session as {labels['emails.david']} -> {status}")
+        room = labels["rooms.watercooler"]
+        r = opener.open(f"{base}/rooms/{room}")
+        body = r.read().decode()
+        shown = len(set(re.findall(r'data-message-id="(\d+)"', body)))
+        in_room = int(psql(f"select count(*) from messages where room_id = {room}"))
+        check(r.status == 200 and shown == min(40, in_room),
+              f"GET /rooms/{room} -> {r.status}, {shown} messages shown ({in_room} in the room)")
+        for name in ("hq", "designers", "group_direct"):
+            r = opener.open(f"{base}/rooms/{labels['rooms.' + name]}")
+            check(r.status == 200, f"GET /rooms/{labels['rooms.' + name]} ({name}) -> {r.status}")
+    finally:
+        for name in (app, pg):
+            sh("docker", "rm", "-f", "-v", name, check=False)
+        sh("docker", "network", "rm", net, check=False)
+    print("FAILED" if failures else "all checks passed")
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()

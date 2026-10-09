@@ -1,0 +1,22 @@
+%{
+  memory: [
+    total: 1063407860,
+    processes: 880540064,
+    processes_used: 879997640,
+    system: 182867796,
+    atom: 2622361,
+    atom_used: 2622361,
+    binary: 43637296,
+    code: 80254483,
+    ets: 9425464
+  ],
+  processes: 1591,
+  reductions: 661690106,
+  schedulers_online: 4,
+  json_library: JSON,
+  window_secs: 10,
+  gcs: 138020,
+  gc_words_reclaimed: 1076501627,
+  io_input_bytes: 1346057,
+  io_output_bytes: 2496282806
+}

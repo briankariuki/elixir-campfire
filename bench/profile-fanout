@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Profile the BEAM of the production image under a steady LiveView fan-out (diagnostic, not a benchmark).
+
+  bench/profile-fanout [--image IMAGE] [--clients 500] [--rate 20] [--secs 10] [--out DIR] [--stages untraced,targeted,tprof]
+
+Starts Postgres and the app exactly like bench/run (same seed, same pinning to SERVER_CPUS, same env), connects
+`--clients` LiveView sockets to the busy room with bench/loadgen, then posts through the bot API at a steady
+`--rate` messages/s (open loop, below saturation) and, from inside the release (`bin/campfire rpc`), records
+over a `--secs` window:
+
+  1. no tracing at all (representative): microstate accounting (:msacc), scheduler wall time (:scheduler),
+     reductions per process class, GC/IO counters, a sample of one outgoing websocket frame;
+  2. targeted: :tprof call_time on ~40 boundary functions (LiveView channel, diff, render, serializer, the caches,
+     Bandit/ThousandIsland, PubSub, Ash): low overhead, the per-delivery numbers to trust;
+  3. tprof: :tprof call_time on every function of every process. Tracing slows the VM down 10x or more, so the
+     proportions are only indicative (cheap, very frequent functions are inflated).
+
+The release does not ship the `tools` app: its ebin (bench/.work/profile-tools, copied from the local OTP) is copied
+into the container. Raw output goes to OUT (default bench/results/profile-fanout-<date>); analyse the tprof data with
+bench/profile-fanout-analyze. On macOS this re-executes inside the harness container like bench/run.
+"""
+import argparse, importlib.machinery, importlib.util, json, os, shutil, subprocess, sys, threading, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "lib"))
+import benchlib as B  # noqa: E402
+
+TOOLS = os.path.join(B.BENCH, ".work", "profile-tools", "ebin")
+APP = "/app/bin/campfire"
+
+PROFILE_EXS = r'''
+secs = %(secs)d
+out = "/tmp/prof"
+File.mkdir_p!(out)
+
+classify = fn pid, info ->
+  dict = Keyword.get(info, :dictionary, [])
+  init =
+    case Keyword.get(dict, :"$initial_call") do
+      {m, _, _} -> m
+      _ ->
+        case Keyword.get(info, :initial_call) do
+          {m, _, _} -> m
+          _ -> :unknown
+        end
+    end
+
+  name = Keyword.get(info, :registered_name)
+  cond do
+    init == Phoenix.LiveView.Channel -> "LiveView channel process"
+    init in [Bandit.DelegatingHandler, ThousandIsland.Handler, Bandit.HTTP1.Handler] -> "Bandit/ThousandIsland connection (websocket transport)"
+    init == ThousandIsland.Acceptor -> "ThousandIsland acceptor"
+    init == Phoenix.PubSub.Supervisor or (is_atom(name) and name |> to_string() |> String.contains?("PubSub")) -> "PubSub"
+    init == DBConnection.ConnectionPool.Pool or init == DBConnection.Connection or init == Postgrex.Protocol -> "DB connection"
+    is_atom(init) and (init |> to_string() |> String.starts_with?("Elixir.Oban")) -> "Oban"
+    true -> "other (#{inspect(init)})"
+  end
+end
+
+snapshot = fn ->
+  for pid <- Process.list(), info = Process.info(pid, [:reductions, :dictionary, :initial_call, :registered_name]), info != nil, into: %%{} do
+    {pid, {Keyword.fetch!(info, :reductions), classify.(pid, info)}}
+  end
+end
+
+IO.puts(:stderr, "prof: json library #{inspect(Phoenix.json_library())}, #{length(Process.list())} processes")
+
+# ---- 0. a sample of one websocket frame (what a client receives per posted message)
+:dbg.start()
+test = self()
+:dbg.tracer(:process, {fn
+  {:trace, _pid, :call, {_, :encode!, [%%Phoenix.Socket.Message{event: "diff"} = msg]}}, nil -> send(test, {:frame, msg}); nil
+  _, acc -> acc
+end, nil})
+:dbg.p(:all, [:call])
+:dbg.tpl(Phoenix.Socket.V2.JSONSerializer, :encode!, 1, [])
+frame =
+  receive do
+    {:frame, msg} -> msg
+  after
+    5_000 -> nil
+  end
+:dbg.stop()
+if frame do
+  {:socket_push, :text, iodata} = Phoenix.Socket.V2.JSONSerializer.encode!(frame)
+  File.write!(Path.join(out, "frame-sample.json"), iodata)
+  File.write!(Path.join(out, "frame-sample-term.txt"), inspect(frame, limit: :infinity, pretty: true, printable_limit: :infinity))
+end
+
+# ---- 1. untraced window: msacc + scheduler wall time + reductions per class + counters
+:erlang.system_flag(:scheduler_wall_time, true)
+before = snapshot.()
+gc0 = :erlang.statistics(:garbage_collection)
+io0 = :erlang.statistics(:io)
+red0 = :erlang.statistics(:reductions)
+s1 = :scheduler.sample_all()
+:msacc.start(secs * 1000)
+s2 = :scheduler.sample_all()
+stats = :msacc.stats()
+after_ = snapshot.()
+gc1 = :erlang.statistics(:garbage_collection)
+io1 = :erlang.statistics(:io)
+red1 = :erlang.statistics(:reductions)
+
+File.open!(Path.join(out, "msacc.txt"), [:write], fn f -> :msacc.print(f, stats, %%{}) end)
+File.open!(Path.join(out, "msacc-system.txt"), [:write], fn f -> :msacc.print(f, stats, %%{system: true}) end)
+File.write!(Path.join(out, "msacc-raw.txt"), inspect(stats, limit: :infinity, pretty: true))
+
+File.write!(Path.join(out, "scheduler-utilization.txt"), inspect(:scheduler.utilization(s1, s2), limit: :infinity, pretty: true))
+
+classes =
+  Enum.reduce(after_, %%{}, fn {pid, {r1, cls}}, acc ->
+    r0 = case before do %%{^pid => {r0, _}} -> r0; _ -> 0 end
+    Map.update(acc, cls, {max(r1 - r0, 0), 1}, fn {r, n} -> {r + max(r1 - r0, 0), n + 1} end)
+  end)
+
+total_red = classes |> Map.values() |> Enum.map(&elem(&1, 0)) |> Enum.sum()
+lines =
+  classes
+  |> Enum.sort_by(fn {_, {r, _}} -> -r end)
+  |> Enum.map(fn {cls, {r, n}} ->
+    "#{String.pad_trailing(cls, 62)} #{String.pad_leading(Integer.to_string(n), 6)} procs #{String.pad_leading(Integer.to_string(r), 14)} reductions #{:erlang.float_to_binary(r * 100 / max(total_red, 1), decimals: 1)}%%"
+  end)
+File.write!(Path.join(out, "reductions-by-class.txt"), Enum.join(lines, "\n") <> "\n")
+
+{gcs0, words0, _} = gc0
+{gcs1, words1, _} = gc1
+{{:input, in0}, {:output, out0}} = io0
+{{:input, in1}, {:output, out1}} = io1
+File.write!(Path.join(out, "counters.txt"), inspect(%%{
+  window_secs: secs,
+  gcs: gcs1 - gcs0, gc_words_reclaimed: words1 - words0,
+  io_input_bytes: in1 - in0, io_output_bytes: out1 - out0,
+  reductions: elem(red1, 0) - elem(red0, 0),
+  processes: length(Process.list()),
+  memory: :erlang.memory(),
+  schedulers_online: :erlang.system_info(:schedulers_online),
+  json_library: Phoenix.json_library()
+}, limit: :infinity, pretty: true))
+:erlang.system_flag(:scheduler_wall_time, false)
+IO.puts(:stderr, "prof: untraced window done")
+:ok
+'''
+
+TPROF_EXS = r'''
+secs = %(secs)d
+out = "/tmp/prof"
+File.mkdir_p!(out)
+{:ok, _} = :tprof.start(%%{type: :call_time})
+:tprof.set_pattern(:_, :_, :_)
+:tprof.enable_trace(:all)
+Process.sleep(secs * 1000)
+:tprof.disable_trace(:all)
+data = :tprof.collect()
+File.write!(Path.join(out, "tprof-call_time.etf"), :erlang.term_to_binary(data, compressed: 6))
+:tprof.stop()
+IO.puts(:stderr, "prof: tprof window done")
+:ok
+'''
+
+
+TARGETED_EXS = r'''
+secs = %(secs)d
+out = "/tmp/prof"
+File.mkdir_p!(out)
+patterns = [
+  {Phoenix.LiveView.Channel, :handle_info, 2}, {Phoenix.LiveView.Channel, :render_diff, 3}, {Phoenix.LiveView.Channel, :push, 3},
+  {Phoenix.LiveView.Renderer, :to_rendered, 2}, {Phoenix.LiveView.Diff, :render, 4}, {Phoenix.LiveView.Diff, :render_private, 2},
+  {Phoenix.LiveView.Lifecycle, :after_render, 1}, {Phoenix.LiveView.Utils, :clear_changed, 1},
+  {CampfireWeb.RoomLive, :handle_info, 2}, {CampfireWeb.RoomLive, :render, 1}, {CampfireWeb.RoomLive, :append_messages, 2},
+  {CampfireWeb.RoomLive, :decorate, 2}, {CampfireWeb.RoomLive, :stop_typing, 2}, {CampfireWeb.RoomLive, :maybe_play_sound, 2},
+  {CampfireWeb.MessageComponents, :message, 1}, {CampfireWeb.MessageComponents, :presentation, 1},
+  {CampfireWeb.MessageComponents, :actions, 1}, {CampfireWeb.MessageComponents, :boosts, 1},
+  {CampfireWeb.MessageBody, :cached_html, 3}, {CampfireWeb.MessageBody, :digest, 2}, {CampfireWeb.MessageBody, :emoji_only?, 1},
+  {CampfireWeb.MessageBody.Cache, :fetch, 3},
+  {Phoenix.Socket.V2.JSONSerializer, :encode!, 1}, {Jason, :encode_to_iodata!, :_}, {JSON, :encode_to_iodata!, :_},
+  {Phoenix.Socket, :__info__, 2}, {Bandit.WebSocket.Handler, :handle_info, 2}, {Bandit.WebSocket.Connection, :handle_info, 3},
+  {Bandit.WebSocket.Frame, :serialize, :_}, {ThousandIsland.Socket, :send, 2},
+  {Phoenix.PubSub, :broadcast, :_}, {Registry, :dispatch, :_}, {Campfire.PubSubBroadcaster, :broadcast, 3},
+  {Campfire.Notifiers.Fanout, :notify, 1}, {Campfire.Broadcast, :users, 2},
+  {CampfireWeb.BotMessageController, :create, 2}, {Campfire.Chat, :create_message, :_}, {Ash, :create, :_},
+  {Phoenix.LiveView.Socket, :clear_temp, 1}
+]
+{:ok, _} = :tprof.start(%%{type: :call_time})
+for {m, f, a} <- patterns, do: :tprof.set_pattern(m, f, a)
+:tprof.enable_trace(:all)
+Process.sleep(secs * 1000)
+:tprof.disable_trace(:all)
+data = :tprof.collect()
+File.write!(Path.join(out, "tprof-targeted.etf"), :erlang.term_to_binary(data, compressed: 6))
+:tprof.stop()
+IO.puts(:stderr, "prof: targeted window done")
+:ok
+'''
+
+
+def ensure_tools():
+    """The release has no `tools` app (tprof): copy its ebin from a local OTP of the same major version (the beams are portable)."""
+    if os.path.isdir(TOOLS):
+        return
+    p = subprocess.run(["erl", "-noshell", "-eval", 'io:format("~s", [code:lib_dir(tools)]), halt().'], capture_output=True, text=True)
+    src = os.path.join(p.stdout.strip(), "ebin")
+    if p.returncode != 0 or not os.path.isdir(src):
+        sys.exit(f"{TOOLS} missing and no local OTP `tools` found: copy lib/tools-*/ebin of an OTP matching the image's here")
+    shutil.copytree(src, TOOLS)
+
+
+def sh(cmd, check=True):
+    return B.run(cmd, check=check)
+
+
+def rpc(code, timeout=600):
+    p = subprocess.run(["docker", "exec", B.APP_NAME, APP, "rpc", code], capture_output=True, text=True, timeout=timeout)
+    return p
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--image", default=B.APP_IMAGE)
+    ap.add_argument("--clients", type=int, default=500)
+    ap.add_argument("--rate", type=float, default=20, help="messages per second posted (open loop)")
+    ap.add_argument("--secs", type=int, default=10, help="length of each profiling window")
+    ap.add_argument("--out")
+    ap.add_argument("--stages", default="untraced,targeted,tprof", type=lambda x: x.split(","),
+                    help="untraced (msacc etc.), targeted (tprof on ~40 boundary functions, low overhead), tprof (every function; very slow)")
+    ap.add_argument("--extra-env", action="append", default=[], help="K=V for the app container")
+    a = ap.parse_args()
+    ensure_tools()
+    if sys.platform == "darwin" and not os.environ.get("BENCH_IN_HARNESS"):
+        spec = importlib.util.spec_from_loader("bench_run", importlib.machinery.SourceFileLoader("bench_run", os.path.join(HERE, "run")))
+        run_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(run_mod)
+        run_mod.launch_in_harness(sys.argv[1:], False, script="profile-fanout")
+    out = os.path.abspath(a.out or os.path.join(B.BENCH, "results", "profile-fanout-" + time.strftime("%Y%m%d")))
+    os.makedirs(out, exist_ok=True)
+    labels = B.Labels(os.path.join(B.SEED, "labels.json"))
+    import suites as S
+    B.wait_for_quiet()
+    B.cleanup()
+    shutil.rmtree(B.WORK, ignore_errors=True)
+    os.makedirs(B.WORK)
+    loadgen = None
+    try:
+        B.start_postgres()
+        B.migrate(a.image, "campfire")
+        B.load_data()
+        B.seed_tweaks(labels)
+        B.start_app(a.image, "campfire", extra_env=a.extra_env)
+        sh(["docker", "cp", TOOLS, f"{B.APP_NAME}:/tmp/tools-ebin"])
+        cookie = S.login(labels["email"], labels["password"])
+        S.preflight(labels, cookie, S.routes(labels, S.scrape_css(cookie, labels["busy_room"])), os.path.join(out, "validation.json"))
+
+        interval_ms = max(int(1000 / a.rate), 1)
+        total_secs = 40 + 2 * a.secs + 60            # generous: the loadgen is stopped when the windows are done
+        args = ["liveview", "--base", B.BASE, "--origin", "http://localhost", "--room", labels["busy_room"], "--clients", a.clients,
+                "--cookie", cookie, "--bot-key", labels["bot_key"], "--latency-msgs", int(total_secs * a.rate), "--interval-ms", interval_ms,
+                "--tput-secs", 0.2, "--posters", 1, *B.LIVEVIEW_ARGS]
+        cmd = ["docker", "run", "--rm", "--name", "bench-loadgen-profile", "--network", "host", "--cpuset-cpus", B.LOADGEN_CPUS,
+               "--ulimit", "nofile=1048576:1048576", "--entrypoint", B.LOADGEN_ENTRYPOINT, B.LOADGEN_IMAGE, *map(str, args)]
+        loadgen = subprocess.Popen(cmd, stdout=open(os.path.join(out, "loadgen.stdout"), "w"), stderr=subprocess.PIPE, text=True)
+        paced = threading.Event()
+
+        def watch():
+            with open(os.path.join(out, "loadgen.stderr"), "w") as f:
+                for line in loadgen.stderr:
+                    f.write(line)
+                    f.flush()
+                    if line.startswith("PHASE paced "):
+                        paced.set()
+
+        threading.Thread(target=watch, daemon=True).start()
+        if not paced.wait(180):
+            raise RuntimeError("clients did not connect in time")
+        B.log(f"{a.clients} clients connected, posting {a.rate}/s; warming up 5 s")
+        time.sleep(5)
+
+        # make the tools app loadable in the release
+        pre = 'if :code.is_loaded(:tprof) == false, do: {:module, :tprof} = :code.load_abs(~c"/tmp/tools-ebin/tprof"); '
+        cg_app, cg_db = B.cgroup_dir(B.APP_NAME), B.cgroup_dir(B.PG_NAME)
+        cpu0 = B.server_cpu({"app": cg_app, "db": cg_db})
+        t0 = time.monotonic()
+        files = {}
+        for name, tmpl in (("untraced", PROFILE_EXS), ("targeted", TARGETED_EXS), ("tprof", TPROF_EXS)):
+            if name not in a.stages:
+                continue
+            script = tmpl % {"secs": a.secs}
+            path = os.path.join(B.WORK, f"{name}.exs")
+            open(path, "w").write(script)
+            sh(["docker", "cp", path, f"{B.APP_NAME}:/tmp/{name}.exs"])
+            B.log(f"profiling window: {name} ({a.secs} s)")
+            c0 = B.server_cpu({"app": cg_app, "db": cg_db})
+            p = rpc(pre + f'Code.eval_file("/tmp/{name}.exs")', timeout=a.secs * 10 + 300)
+            c1 = B.server_cpu({"app": cg_app, "db": cg_db})
+            open(os.path.join(out, f"{name}.rpc.log"), "w").write(p.stdout + "\n--- stderr\n" + p.stderr)
+            B.log(f"  rpc exit {p.returncode}; app cpu {(c1['app'] - c0['app']) / 1e6:.1f} s, db cpu {(c1['db'] - c0['db']) / 1e6:.1f} s over the window+setup")
+            if p.returncode != 0:
+                B.log(p.stderr[-1500:])
+            files[name] = {"app_cpu_s": (c1["app"] - c0["app"]) / 1e6, "db_cpu_s": (c1["db"] - c0["db"]) / 1e6}
+            time.sleep(2)
+        json.dump({"clients": a.clients, "rate": a.rate, "secs": a.secs, "image": a.image, "cpu": files}, open(os.path.join(out, "run.json"), "w"), indent=1)
+        sh(["docker", "cp", f"{B.APP_NAME}:/tmp/prof/.", out])
+    finally:
+        subprocess.run(["docker", "rm", "-f", "bench-loadgen-profile"], capture_output=True)
+        if loadgen:
+            loadgen.kill()
+        if os.environ.get("BENCH_KEEP") != "1":
+            B.cleanup()
+            shutil.rmtree(B.WORK, ignore_errors=True)
+        user = os.environ.get("BENCH_OUT_HOST_USER")
+        if user and os.path.isdir(out):
+            subprocess.run(["chown", "-R", user, out], capture_output=True)
+
+
+if __name__ == "__main__":
+    main()

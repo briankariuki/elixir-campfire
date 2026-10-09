@@ -1,0 +1,48 @@
+{
+ "bytes": 505420,
+ "file": "black_hole.jpg",
+ "median_total_ms": 42.2,
+ "ok_status": 201,
+ "runs": [
+  {
+   "post_ms": 60.7,
+   "post_status": 201,
+   "thumb_bytes": 95430,
+   "thumb_ms": 3.5,
+   "thumb_status": 200,
+   "total_ms": 64.2
+  },
+  {
+   "post_ms": 40.0,
+   "post_status": 201,
+   "thumb_bytes": 95430,
+   "thumb_ms": 2.5,
+   "thumb_status": 200,
+   "total_ms": 42.5
+  },
+  {
+   "post_ms": 39.7,
+   "post_status": 201,
+   "thumb_bytes": 95430,
+   "thumb_ms": 2.5,
+   "thumb_status": 200,
+   "total_ms": 42.2
+  },
+  {
+   "post_ms": 38.8,
+   "post_status": 201,
+   "thumb_bytes": 95430,
+   "thumb_ms": 2.4,
+   "thumb_status": 200,
+   "total_ms": 41.3
+  },
+  {
+   "post_ms": 36.4,
+   "post_status": 201,
+   "thumb_bytes": 95430,
+   "thumb_ms": 2.5,
+   "thumb_status": 200,
+   "total_ms": 38.9
+  }
+ ]
+}

@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Compare two matched bench/run result dirs (e.g. before and after a change), median of reps per app.
+
+  bench/compare A B [--app NAME] [--conc 64]
+
+For every app present in both directories prints A, B and the change (B / A, shown as "×"; for time,
+memory and CPU rows lower is better, so B/A < 1 is an improvement, for throughput rows > 1 is).
+Raw numbers are medians over reps; run both with the same knobs, seed and SERVER_CPUS (compare reads
+env.txt to warn when they differ). Modeled on once-campfire-elixir's bench/compare (MIT).
+"""
+import argparse, glob, json, os, re, statistics, sys
+
+
+def runs(root, app):
+    out = []
+    for p in sorted(glob.glob(os.path.join(root, f"{app}-*.json"))):
+        r = json.load(open(p))
+        if isinstance(r, dict) and r.get("app") == app:
+            out.append(r)
+    return out
+
+
+def apps_in(root):
+    seen = []
+    for p in sorted(glob.glob(os.path.join(root, "*-*.json"))):
+        try:
+            r = json.load(open(p))
+        except ValueError:
+            continue
+        if isinstance(r, dict) and "app" in r and r["app"] not in seen:
+            seen.append(r["app"])
+    return seen
+
+
+def fanout(r):
+    return r.get("liveview") or r.get("cable") or []
+
+
+def med(rs, get):
+    vals = []
+    for r in rs:
+        try:
+            v = get(r)
+        except (KeyError, IndexError, StopIteration, TypeError):
+            v = None
+        if v is not None:
+            vals.append(v)
+    return statistics.median(vals) if vals else None
+
+
+def knobs(root):
+    p = os.path.join(root, "env.txt")
+    if not os.path.exists(p):
+        return {}
+    keep = ("server cpus", "workload", "seed sha256", "postgres:")
+    return {k: l for l in open(p).read().splitlines() for k in keep if l.startswith(k)}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("a")
+    ap.add_argument("b")
+    ap.add_argument("--app")
+    ap.add_argument("--conc", type=int, help="HTTP concurrency to compare (default: the highest in A)")
+    args = ap.parse_args()
+    for root in (args.a, args.b):
+        if os.path.exists(os.path.join(root, "INCOMPLETE.md")):
+            sys.exit(f"{root}: incomplete diagnostic run: refusing comparison")
+    ka, kb = knobs(args.a), knobs(args.b)
+    mismatched = [k for k in ka if ka.get(k) != kb.get(k)]
+    apps = [args.app] if args.app else [x for x in apps_in(args.a) if x in apps_in(args.b)]
+    if not apps:
+        sys.exit("no app present in both directories (use --app A for different names: it must exist in both)")
+    print("# Comparison\n")
+    print(f"A = `{args.a}`, B = `{args.b}`. Medians over reps. ×: B ÷ A.\n")
+    if mismatched:
+        print("**Warning: the runs' knobs differ**, so the numbers are not matched:\n")
+        for k in mismatched:
+            print(f"- A: `{ka.get(k)}`\n  B: `{kb.get(k)}`")
+        print()
+    for app in apps:
+        ra, rb = runs(args.a, app), runs(args.b, app)
+        print(f"## {app} ({len(ra)} reps vs {len(rb)} reps)\n")
+        if args.conc is None:
+            args.conc = max((h["conc"] for r in ra[:1] for h in r["http"]), default=64)
+        routes = []
+        for r in ra[:1] + rb[:1]:
+            for h in r["http"]:
+                if h["route"] not in routes:
+                    routes.append(h["route"])
+        print(f"| Throughput | A | B | × |\n|---|---:|---:|---:|")
+
+        def line(name, getter, fmt="{:,.1f}"):
+            x, y = med(ra, getter), med(rb, getter)
+            if x is None or y is None:
+                return
+            print(f"| {name} | {fmt.format(x)} | {fmt.format(y)} | {y / x:.2f}× |" if x else f"| {name} | {fmt.format(x)} | {fmt.format(y)} | – |")
+
+        for route in routes:
+            line(f"{route} req/s (c={args.conc})", lambda r, route=route: next(h["rps"] for h in r["http"] if h["route"] == route and h["conc"] == args.conc))
+        sizes = sorted({c["clients"] for r in ra[:1] for c in fanout(r)})
+        for n in sizes:
+            line(f"LiveView fan-out {n} clients, msgs/s delivered to all",
+                 lambda r, n=n: next(c["throughput"]["delivered_msgs_per_sec"] for c in fanout(r) if c["clients"] == n))
+        for n in sorted({c["clients"] for r in ra[:1] for c in r.get("distinct", [])}):
+            line(f"distinct-users fan-out {n} clients, msgs/s", lambda r, n=n: next(c["throughput"]["delivered_msgs_per_sec"] for c in r["distinct"] if c["clients"] == n))
+        print("\n| Latency (p50 ms, c=%d) | A | B | × |\n|---|---:|---:|---:|" % args.conc)
+        for route in routes:
+            line(f"{route}", lambda r, route=route: next(h["latency"]["p50_ms"] for h in r["http"] if h["route"] == route and h["conc"] == args.conc), "{:,.2f}")
+        print("\n| Cost | A | B | × |\n|---|---:|---:|---:|")
+        line("Cold start (ms)", lambda r: r["cold_start_ms"])
+        line("Idle anonymous memory (MiB)", lambda r: r["memory"]["idle_anon_mb"])
+        line("Peak anonymous memory (MiB)", lambda r: r["memory"]["peak_anon_mb"])
+        line("Peak memory.current (MiB)", lambda r: r["memory"]["peak_current_mb"])
+        line("Upload → thumbnail (ms)", lambda r: r["upload"]["median_total_ms"])
+        for route in routes:
+            line(f"{route} CPU µs/success (c={args.conc})", lambda r, route=route: next(h["cpu_us_per_success"] for h in r["http"] if h["route"] == route and h["conc"] == args.conc))
+        print("\nEnd-of-run Oban queue counts (accepted writes can precede job completion):\n")
+        print("| Run | Queued | Processed | Failed |\n|---|---:|---:|---:|")
+        for root in (args.a, args.b):
+            for p in sorted(glob.glob(os.path.join(root, f"{app}-*-jobs.json"))):
+                j = json.load(open(p))
+                print(f"| {os.path.basename(root.rstrip('/'))} / {os.path.basename(p)[:-10]} | {j.get('queued', '–')} | {j.get('processed', '–')} | {j.get('failed', '–')} |")
+        print()
+
+
+if __name__ == "__main__":
+    main()

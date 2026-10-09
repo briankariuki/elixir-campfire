@@ -1,0 +1,464 @@
+[
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 0,
+    type: :async,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 259,
+      check_io: 92,
+      gc: 0,
+      other: 28,
+      sleep: 10001428
+    },
+    id: 1,
+    type: :aux,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 1,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 2,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 9,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 531,
+      other: 46145,
+      sleep: 9955140
+    },
+    id: 3,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 5940,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 715,
+      other: 63623,
+      sleep: 9931547
+    },
+    id: 4,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 5,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 6,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 7,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 8,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 9,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 10,
+    type: :dirty_cpu_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 59926,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 186758,
+      sleep: 9755141
+    },
+    id: 1,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 2,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 3,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 4,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 5,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 6,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 7,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 8,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001827
+    },
+    id: 9,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 0,
+      gc: 0,
+      other: 0,
+      sleep: 10001826
+    },
+    id: 10,
+    type: :dirty_io_scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 0,
+      check_io: 123367,
+      gc: 0,
+      other: 0,
+      sleep: 9878458
+    },
+    id: 0,
+    type: :poll,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 3864716,
+      port: 226006,
+      aux: 49275,
+      check_io: 65184,
+      gc: 1081814,
+      other: 178398,
+      sleep: 4536423
+    },
+    id: 1,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 3623595,
+      port: 172065,
+      aux: 44343,
+      check_io: 32250,
+      gc: 1088147,
+      other: 135615,
+      sleep: 4905785
+    },
+    id: 2,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 3983868,
+      port: 247341,
+      aux: 54191,
+      check_io: 37707,
+      gc: 1095045,
+      other: 194606,
+      sleep: 4389075
+    },
+    id: 3,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 3599842,
+      port: 156507,
+      aux: 46660,
+      check_io: 35191,
+      gc: 1100000,
+      other: 118322,
+      sleep: 4945242
+    },
+    id: 4,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 43,
+      check_io: 0,
+      gc: 0,
+      other: 21,
+      sleep: 10001741
+    },
+    id: 5,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 20,
+      check_io: 0,
+      gc: 0,
+      other: 17,
+      sleep: 10001773
+    },
+    id: 6,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 27,
+      check_io: 0,
+      gc: 0,
+      other: 19,
+      sleep: 10001768
+    },
+    id: 7,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 58,
+      check_io: 0,
+      gc: 0,
+      other: 9,
+      sleep: 10001750
+    },
+    id: 8,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 15,
+      check_io: 0,
+      gc: 0,
+      other: 23,
+      sleep: 10001784
+    },
+    id: 9,
+    type: :scheduler,
+    "$type": :msacc_data
+  },
+  %{
+    counters: %{
+      emulator: 0,
+      port: 0,
+      aux: 23,
+      check_io: 0,
+      gc: 0,
+      other: 16,
+      sleep: 10001788
+    },
+    id: 10,
+    type: :scheduler,
+    "$type": :msacc_data
+  }
+]

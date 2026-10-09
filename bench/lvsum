@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Compact fan-out comparison of result dirs: bench/lvsum DIR [DIR...] (median over reps; baseline = first)."""
+import glob, json, statistics, sys
+
+def load(d):
+    rs = []
+    for p in sorted(glob.glob(f"{d}/*-[0-9].json")):
+        r = json.load(open(p))
+        if isinstance(r, dict) and "liveview" in r:
+            rs.append(r)
+    return rs
+
+def med(rs, n, get):
+    v = []
+    for r in rs:
+        for c in r["liveview"]:
+            if c["clients"] == n:
+                try: v.append(get(c))
+                except KeyError: pass
+    return statistics.median(v) if v else None
+
+rows = [("tput msg/s", lambda c: c["throughput"]["delivered_msgs_per_sec"], "{:.1f}"),
+        ("paced p50 ms", lambda c: c["latency"]["all_clients"]["p50_ms"], "{:.1f}"),
+        ("paced p99 ms", lambda c: c["latency"]["all_clients"]["p99_ms"], "{:.1f}"),
+        ("wire MB/s", lambda c: c["throughput"]["wire_mb_per_sec"], "{:.1f}"),
+        ("frames/s", lambda c: c["throughput"]["frames_per_sec"], "{:.0f}"),
+        ("server cores busy (saturated)", lambda c: sum(c["process_memory"]["saturated"]["cpu_cores"]), "{:.2f}"),
+        ("server CPU us/frame", lambda c: sum(c["process_memory"]["saturated"]["cpu_cores"]) * 1e6 / c["throughput"]["frames_per_sec"], "{:.0f}")]
+dirs = sys.argv[1:]
+data = {d: load(d) for d in dirs}
+print("| metric | clients | " + " | ".join(d.rstrip("/").split("/")[-1] for d in dirs) + " |")
+print("|---|---:|" + "---:|" * len(dirs))
+for name, get, fmt in rows:
+    for n in (100, 500, 1000):
+        vals = [med(data[d], n, get) for d in dirs]
+        base = vals[0]
+        cells = []
+        for i, v in enumerate(vals):
+            if v is None: cells.append("-")
+            elif i == 0 or not base: cells.append(fmt.format(v))
+            else: cells.append(f"{fmt.format(v)} ({v / base:.2f}x)")
+        print(f"| {name} | {n} | " + " | ".join(cells) + " |")
+mem = []
+for d in dirs:
+    rs = data[d]
+    mem.append(statistics.median(r["memory"]["peak_anon_mb"] for r in rs) if rs else None)
+print("| peak anon MiB | all | " + " | ".join("-" if m is None else f"{m:.0f}" for m in mem) + " |")
