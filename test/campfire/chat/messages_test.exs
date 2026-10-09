@@ -395,6 +395,115 @@ defmodule Campfire.Chat.MessagesTest do
                messages |> Enum.take(-40) |> ids()
     end
 
+    # inserted_at is shuffled so it disagrees with id order, in groups of 7 sharing one value
+    # (so page boundaries fall inside tie groups); the id breaks the ties.
+    defp scramble_inserted_at(messages) do
+      base = ~N[2020-01-01 00:00:00.000000]
+
+      messages
+      |> Enum.with_index()
+      |> Enum.map(fn {message, index} ->
+        offset = rem(div(index, 7) * 5, 11)
+        at = NaiveDateTime.add(base, offset, :second)
+        Repo.update_all(from(m in "messages", where: m.id == ^message.id), set: [inserted_at: at])
+        {offset, message.id}
+      end)
+      |> Enum.sort()
+      |> Enum.map(&elem(&1, 1))
+    end
+
+    test "walks the whole room in both directions with ties across page boundaries", %{
+      room: room,
+      author: author,
+      messages: messages
+    } do
+      ordered = scramble_inserted_at(messages)
+
+      last = ids(Chat.page_messages!(room.id, actor: author))
+      assert last == Enum.take(ordered, -40)
+
+      # backwards from the last page, 40 at a time
+      back =
+        Enum.reduce_while(1..5, {last, []}, fn _, {page, acc} ->
+          case Chat.page_messages!(room.id, %{before: hd(page)}, actor: author) do
+            [] -> {:halt, {page, acc}}
+            earlier -> {:cont, {ids(earlier), [ids(earlier) | acc]}}
+          end
+        end)
+        |> elem(1)
+
+      assert List.flatten(back) ++ last == ordered
+
+      # forwards from the first message
+      first_page = Enum.take(ordered, 40)
+
+      forward =
+        Enum.reduce_while(1..5, {List.last(first_page), []}, fn _, {cursor, acc} ->
+          case Chat.page_messages!(room.id, %{after: cursor}, actor: author) do
+            [] -> {:halt, {cursor, acc}}
+            later -> {:cont, {ids(later) |> List.last(), acc ++ ids(later)}}
+          end
+        end)
+        |> elem(1)
+
+      assert first_page ++ forward == ordered
+    end
+
+    test "edges: before the first, after the last, around either end", %{
+      room: room,
+      author: author,
+      messages: messages
+    } do
+      all_ids = ids(messages)
+      first = hd(messages)
+      last = List.last(messages)
+
+      assert Chat.page_messages!(room.id, %{before: first.id}, actor: author) == []
+      assert Chat.page_messages!(room.id, %{after: last.id}, actor: author) == []
+
+      assert ids(Chat.page_messages!(room.id, %{around: first.id}, actor: author)) ==
+               Enum.take(all_ids, 41)
+
+      assert ids(Chat.page_messages!(room.id, %{around: last.id}, actor: author)) ==
+               Enum.take(all_ids, -41)
+
+      # a short page next to the edge is still ascending
+      assert ids(Chat.page_messages!(room.id, %{before: Enum.at(messages, 2).id}, actor: author)) ==
+               Enum.take(all_ids, 2)
+
+      assert ids(Chat.page_messages!(room.id, %{after: Enum.at(messages, 97).id}, actor: author)) ==
+               Enum.take(all_ids, -2)
+    end
+
+    test "a deleted cursor at the edges pages by id", %{
+      room: room,
+      author: author,
+      messages: messages
+    } do
+      first = hd(messages)
+      last = List.last(messages)
+      Chat.destroy_message!(first, actor: author)
+      Chat.destroy_message!(last, actor: author)
+
+      assert Chat.page_messages!(room.id, %{before: first.id}, actor: author) == []
+      assert Chat.page_messages!(room.id, %{after: last.id}, actor: author) == []
+
+      assert ids(Chat.page_messages!(room.id, %{after: first.id}, actor: author)) ==
+               messages |> Enum.slice(1, 40) |> ids()
+
+      assert ids(Chat.page_messages!(room.id, %{before: last.id}, actor: author)) ==
+               messages |> Enum.slice(59, 40) |> ids()
+    end
+
+    test "a non-member gets nothing for any cursor", %{room: room, messages: messages} do
+      outsider = user_fixture()
+      cursor = Enum.at(messages, 50)
+
+      for params <- [%{}, %{before: cursor.id}, %{after: cursor.id}, %{around: cursor.id}] do
+        assert Chat.page_messages!(room.id, params, actor: outsider) == []
+      end
+    end
+
     test "a cursor from another room only pages this room", %{room: room, author: author} do
       other_room = open_room_fixture(author)
       other = message_fixture(other_room, author)
@@ -451,8 +560,11 @@ defmodule Campfire.Chat.MessagesTest do
 
       assert {:ok, boost} = Chat.create_boost(message, "🎉", actor: member)
       assert boost.booster.id == member.id
-      assert_receive {:boost_created, %{id: id, content: "🎉", booster: %{}}}
+      assert_receive {:boost_created, %{id: id, content: "🎉", booster: %{}, message: broadcast}}
       assert id == boost.id
+      assert broadcast.id == message.id
+      assert [%{id: ^id, booster: %{id: booster_id}}] = broadcast.boosts
+      assert booster_id == member.id
       assert boost.room_id == room.id
 
       assert [%{content: "🎉"}] =
@@ -461,7 +573,7 @@ defmodule Campfire.Chat.MessagesTest do
       assert {:error, %Ash.Error.Forbidden{}} = Chat.destroy_boost(boost, actor: author)
       assert {:error, %Ash.Error.Forbidden{}} = Chat.destroy_boost(boost, actor: admin_fixture())
       assert :ok = Chat.destroy_boost(boost, actor: member)
-      assert_receive {:boost_deleted, %{id: ^id}}
+      assert_receive {:boost_deleted, %{id: ^id, message: %{boosts: []}}}
     end
   end
 

@@ -6,6 +6,7 @@ defmodule CampfireWeb.ProfileLive do
   use CampfireWeb, :live_view
 
   import CampfireWeb.SettingsComponents
+  import CampfireWeb.Translations, only: [translation_button: 1]
 
   alias Campfire.{Accounts, Chat}
   alias CampfireWeb.{ErrorMessages, ImageUpload, Paths}
@@ -168,45 +169,57 @@ defmodule CampfireWeb.ProfileLive do
 
         <.form for={@form} id="profile-form" phx-change="validate" phx-submit="save">
           <div class="flex flex-column gap">
-            <.input
-              field={@form[:name]}
-              icon="person"
-              label="Name"
-              class="txt-large"
-              placeholder="Enter your name"
-              autocomplete="name"
-              required
-            />
-            <.input
-              field={@form[:email_address]}
-              type="email"
-              icon="email"
-              label="Email address"
-              class="txt-large"
-              placeholder="Enter your email address"
-              autocomplete="username"
-            />
-            <.input
-              field={@form[:password]}
-              type="password"
-              icon="password"
-              label="Change password"
-              class="txt-large"
-              placeholder="Change password"
-              autocomplete="new-password"
-              maxlength="72"
-              value=""
-            />
-            <.input
-              field={@form[:bio]}
-              type="textarea"
-              icon="bio"
-              label="Bio"
-              class="txt-large"
-              placeholder="A few words about yourself…"
-              maxlength="200"
-              rows="3"
-            />
+            <div class="flex align-center gap">
+              <.translation_button key={:user_name} />
+              <.input
+                field={@form[:name]}
+                icon="person"
+                label="Name"
+                class="txt-large flex-item-grow"
+                placeholder="Enter your name"
+                autocomplete="name"
+                required
+              />
+            </div>
+            <div class="flex align-center gap">
+              <.translation_button key={:email_address} />
+              <.input
+                field={@form[:email_address]}
+                type="email"
+                icon="email"
+                label="Email address"
+                class="txt-large flex-item-grow"
+                placeholder="Enter your email address"
+                autocomplete="username"
+              />
+            </div>
+            <div class="flex align-center gap">
+              <.translation_button key={:update_password} />
+              <.input
+                field={@form[:password]}
+                type="password"
+                icon="password"
+                label="Change password"
+                class="txt-large flex-item-grow"
+                placeholder="Change password"
+                autocomplete="new-password"
+                maxlength="72"
+                value=""
+              />
+            </div>
+            <div class="flex align-start gap">
+              <.translation_button key={:bio} />
+              <.input
+                field={@form[:bio]}
+                type="textarea"
+                icon="bio"
+                label="Bio"
+                class="txt-large flex-item-grow"
+                placeholder="A few words about yourself…"
+                maxlength="200"
+                rows="3"
+              />
+            </div>
 
             <.icon_button
               icon="check"

@@ -27,6 +27,15 @@ defmodule CampfireWeb.ErrorMessages do
   def field_error?(%{field: field}, field), do: true
   def field_error?(_error, _field), do: false
 
+  @doc """
+  Whether a submitted `AshPhoenix.Form` (as a `Phoenix.HTML.Form`) failed because the actor isn't
+  allowed to run the action, rather than because of invalid input.
+  """
+  def forbidden?(%Phoenix.HTML.Form{source: %AshPhoenix.Form{source: %{errors: errors}}}),
+    do: Enum.any?(errors, &(Map.get(&1, :class) == :forbidden))
+
+  def forbidden?(_form), do: false
+
   defp humanize(field) do
     field |> to_string() |> String.replace("_", " ") |> String.capitalize()
   end

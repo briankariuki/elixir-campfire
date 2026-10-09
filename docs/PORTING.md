@@ -58,10 +58,13 @@ A self-hosted, single-tenant group chat:
 
 ### Dropped for simplicity
 
-Web Push and VAPID, PWA (manifest and service worker), QR codes, OpenGraph link unfurling, custom CSS, translation popups,
-the browser-version gate, version headers, image thumbnails and video previews (originals are served and sized with CSS),
-the rich-text toolbar, Sentry, `Purchaser`, the `/rooms/:id/refresh` catch-up endpoint and the heartbeat channel
-(a LiveView remount covers both).
+Web Push and VAPID, PWA (manifest and service worker), Sentry, `Purchaser`, video poster previews (they need `ffmpeg`),
+code syntax highlighting, the `/rooms/:id/refresh` catch-up endpoint and the heartbeat channel (a LiveView remount
+covers both).
+
+*Ported later* (originally dropped here, see the README's parity section): QR codes, OpenGraph link previews, custom CSS,
+translation popups, the browser-version gate, version headers, image thumbnails and the rich-text toolbar (over a
+Markdown-like subset).
 
 **Involvement levels stay** (`invisible` hides a room from the sidebar). Without push, the other levels have no effect,
 but the bell UI still cycles through them so the data model matches the original.
@@ -256,7 +259,7 @@ JSON shapes:
 ```jsonc
 // message
 {"id": 1, "created_at": "2024-01-01T00:00:00Z",
- "body": {"plain_text": "Hello", "html": "<p>Hello</p>"},
+ "body": {"plain_text": "Hello", "html": "<div class=\"lexxy-content\">Hello</div>"},
  "creator": {"id": 2, "name": "Bot", "role": "bot", "avatar_url": "https://host/users/2/avatar"},
  "room": {"id": 3}, "url": "https://host/rooms/3/@1"}
 // boost
@@ -270,9 +273,11 @@ JSON shapes:
 ```json
 {"user":    {"id": 1, "name": "David"},
  "room":    {"id": 3, "name": "Watercooler", "path": "/rooms/3/<bot_key>/messages"},
- "message": {"id": 7, "body": {"html": "<p>…</p>", "plain": "text with '@BotName' removed, trimmed"},
+ "message": {"id": 7, "body": {"html": "<div class=\"lexxy-content\">…</div>", "plain": "text with '@BotName' removed, trimmed"},
              "path": "/rooms/3/@7"}}
 ```
+
+`body.html` is the same HTML as the bot API's message `body.html` (see §6, "Message rendering").
 
 Reply handling:
 - A 2xx response with content type `text/plain` or `text/html` and a non-blank body becomes a text message from the bot.
@@ -333,7 +338,7 @@ scope "/rooms/:room_id/:bot_key", pipe_through :bot_api   (see §5)
   - Direct rooms come first, newest first. Then shared rooms by name. Up to 20 "Ping" placeholders for users you have no DM with.
   - A "+" new-room button (hidden when room creation is restricted), plus profile and settings links at the bottom.
 - **RoomLive**: the message stream (`stream(:messages, …)`, DOM id `"messages-#{client_message_id}"`) and
-  `phx-viewport-top` to load older messages.
+  the `MessagePager` hook (not `phx-viewport-top`, see `room_live.ex`) to load older and newer pages on scroll.
   - Composer: a `<textarea>` with Enter to send, plus `allow_upload(:attachments, max_entries: 10)`; each file becomes
     its own message.
   - Message options: 8 quick boosts (👍 👏 👋 💪 ❤️ 😂 🎉 🔥), a custom boost, reply (prefills `> quote`), copy link,
@@ -351,8 +356,14 @@ Use the original markup and classes (`analysis/03-ui.md` §3):
 Body rendering, in order:
 1. HTML-escape.
 2. Autolink `https?://…` (`target="_blank" rel="noopener"`).
-3. Turn `> ` lines into `<blockquote>`.
-4. Replace each mentioned `@Name` with `<span class="mention">…</span>`.
+3. Turn `> ` lines into `<blockquote>`. A line right after a quote that starts with `— ` is the reply attribution:
+   `<cite>Author <a href="/rooms/1/@123">#</a></cite>` (the `#` link only for a same-site message permalink; any other
+   `— text` is a plain escaped `<cite>`; the CSS adds the "— "). The Reply action pre-fills the composer with
+   `> quoted line(s)\n— Author /rooms/1/@123\n\n` (`MessageBody.reply_text/2`; nested quotes, an earlier attribution
+   and the `@` of mentions are left out; a `/play` message quotes the sound's caption).
+4. Replace each mentioned `@Name` with `<span class="mention"><a class="btn avatar" href="/users/ID"><img …></a> Name</span>`.
+   In a LiveView (`live: true`) the link carries `data-phx-link="redirect"` and `data-phx-link-state="push"`, so it
+   navigates without a reload; bot API and webhook html keep plain links.
 5. Turn newlines into `<br>`.
 6. Wrap in `<div class="lexxy-content">`.
 

@@ -23,31 +23,27 @@ defmodule CampfireWeb.RoomLiveTest do
       {:ok, view, html} = live(conn, ~p"/rooms/#{room.id}")
 
       assert html =~ "Watercooler"
-      assert has_element?(view, "#room_#{room.id}_message_stream[phx-viewport-top]")
+      assert has_element?(view, "#room_#{room.id}_message_pager[data-load-older]")
       refute has_element?(view, message_dom_id(hd(messages)))
       assert has_element?(view, message_dom_id(List.last(messages)), "Message number 45")
       assert has_element?(view, message_dom_id(Enum.at(messages, 5)), "Message number 6")
 
       html = render_hook(view, "load_older", %{})
       assert html =~ "Message number 1<"
-      refute has_element?(view, "#room_#{room.id}_message_stream[phx-viewport-top]")
+      refute has_element?(view, "#room_#{room.id}_message_pager[data-load-older]")
     end
 
-    # The stream element is display: contents (no box), so the infinite-scroll hook must measure
-    # a boxed element for its top-overrun check
-    test "points the infinite scroll's overrun check at an existing element", %{
-      conn: conn,
-      room: room
-    } do
-      {:ok, view, html} = live(conn, ~p"/rooms/#{room.id}")
+    # LiveView's phx-viewport-* hook on the stream sends two load_older events per scroll and locks
+    # the stream while they're in flight; overlapping replies then merge in the wrong order in the
+    # browser (not reproducible in LiveViewTest). Paging is done by the MessagePager hook, on an
+    # element beside the stream, one request at a time.
+    test "pages from a pager beside the stream, not from the stream", %{conn: conn, room: room} do
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
 
-      [target] =
-        html
-        |> LazyHTML.from_document()
-        |> LazyHTML.query("#room_#{room.id}_message_stream")
-        |> LazyHTML.attribute("phx-viewport-overrun-target")
-
-      assert has_element?(view, "#room_#{room.id}_messages > ##{target}")
+      assert has_element?(view, "#room_#{room.id}_messages > #room_#{room.id}_message_pager")
+      refute has_element?(view, "#room_#{room.id}_message_stream[phx-hook]")
+      refute has_element?(view, "#room_#{room.id}_message_stream[phx-viewport-top]")
+      refute has_element?(view, "#room_#{room.id}_message_stream[phx-viewport-bottom]")
     end
 
     test "opens the page around a message and highlights it", %{
@@ -66,7 +62,7 @@ defmodule CampfireWeb.RoomLiveTest do
       render_hook(view, "load_newer", %{})
       render_hook(view, "load_newer", %{})
       assert has_element?(view, message_dom_id(List.last(messages)))
-      refute has_element?(view, "#room_#{room.id}_message_stream[phx-viewport-bottom]")
+      refute has_element?(view, "#room_#{room.id}_message_pager[data-load-newer]")
     end
 
     test "redirects non-members home", %{conn: conn, other: other} do
@@ -189,7 +185,8 @@ defmodule CampfireWeb.RoomLiveTest do
       {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
 
       view |> element(message_dom_id(message) <> " [aria-label=Reply]") |> render_click()
-      assert_push_event(view, "composer:insert", %{text: "> line one\n> line two\n"})
+      expected = "> line one\n> line two\n— Other Person /rooms/#{room.id}/@#{message.id}\n\n"
+      assert_push_event(view, "composer:insert", %{text: ^expected})
     end
 
     test "shows messages edited and deleted elsewhere", %{
@@ -238,6 +235,184 @@ defmodule CampfireWeb.RoomLiveTest do
 
       render_keydown(view, "cancel_edit", %{"key" => "Escape", "id" => second.id})
       refute has_element?(view, "form[id^=edit-form-]")
+    end
+  end
+
+  describe "trimming the DOM to 300 messages" do
+    @cap 300
+
+    defp create_messages(room, user, count) do
+      for i <- 1..count, do: message_fixture(room, user, %{body: "Message number #{i}"})
+    end
+
+    defp message_count(view, room) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#room_#{room.id}_message_stream > .message")
+      |> Enum.count()
+    end
+
+    defp load_older_times(view, times),
+      do: for(_ <- 1..times, do: render_hook(view, "load_older", %{}))
+
+    # Opens the room and pages back until the DOM is full with the 300 oldest of `messages`
+    # (350 messages: the last page, then 7 older pages, the last one trimming the newest 20)
+    defp scrolled_back(conn, room, messages) do
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+      load_older_times(view, 7)
+      assert length(messages) == 350
+      view
+    end
+
+    test "scrolling back keeps the oldest 300 and load_newer brings the dropped ones back", %{
+      conn: conn,
+      user: user,
+      room: room
+    } do
+      messages = create_messages(room, user, 350)
+      pager = "#room_#{room.id}_message_pager"
+      view = scrolled_back(conn, room, messages)
+
+      assert message_count(view, room) == @cap
+      assert has_element?(view, message_dom_id(Enum.at(messages, 30)))
+      assert has_element?(view, message_dom_id(Enum.at(messages, 329)))
+      refute has_element?(view, message_dom_id(Enum.at(messages, 330)))
+      refute has_element?(view, message_dom_id(List.last(messages)))
+      assert has_element?(view, "#{pager}[data-load-older]")
+      assert has_element?(view, "#{pager}[data-load-newer]")
+
+      # The dropped messages come back from the bottom, trimming the top in turn
+      render_hook(view, "load_newer", %{})
+      assert message_count(view, room) == @cap
+      assert has_element?(view, message_dom_id(List.last(messages)))
+      assert has_element?(view, message_dom_id(Enum.at(messages, 330)))
+      refute has_element?(view, message_dom_id(Enum.at(messages, 49)))
+      assert has_element?(view, message_dom_id(Enum.at(messages, 50)))
+      assert has_element?(view, "#{pager}[data-load-older]")
+      refute has_element?(view, "#{pager}[data-load-newer]")
+
+      # And the trimmed top is reachable again
+      render_hook(view, "load_older", %{})
+      assert message_count(view, room) == @cap
+      assert has_element?(view, message_dom_id(Enum.at(messages, 10)))
+      refute has_element?(view, message_dom_id(List.last(messages)))
+      assert has_element?(view, "#{pager}[data-load-newer]")
+    end
+
+    test "live messages at the live end trim the oldest and load_older restores them", %{
+      conn: conn,
+      user: user,
+      room: room
+    } do
+      messages = create_messages(room, user, @cap)
+      pager = "#room_#{room.id}_message_pager"
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+      load_older_times(view, 7)
+
+      assert message_count(view, room) == @cap
+      assert has_element?(view, message_dom_id(hd(messages)))
+      refute has_element?(view, "#{pager}[data-load-older]")
+
+      newest = message_fixture(room, user, %{body: "Newest of all"})
+
+      assert message_count(view, room) == @cap
+      assert has_element?(view, message_dom_id(newest), "Newest of all")
+      refute has_element?(view, message_dom_id(hd(messages)))
+      assert has_element?(view, message_dom_id(Enum.at(messages, 1)))
+      assert has_element?(view, "#{pager}[data-load-older]")
+      refute has_element?(view, "#{pager}[data-load-newer]")
+
+      render_hook(view, "load_older", %{})
+      assert has_element?(view, message_dom_id(hd(messages)))
+      refute has_element?(view, message_dom_id(newest))
+      assert message_count(view, room) == @cap
+      assert has_element?(view, "#{pager}[data-load-newer]")
+      refute has_element?(view, "#{pager}[data-load-older]")
+    end
+
+    test "live messages are left out while scrolled back, then load_newer fetches them", %{
+      conn: conn,
+      user: user,
+      room: room
+    } do
+      messages = create_messages(room, user, 350)
+      view = scrolled_back(conn, room, messages)
+
+      newest = message_fixture(room, user, %{body: "Arrived while away"})
+      assert message_count(view, room) == @cap
+      refute has_element?(view, message_dom_id(newest))
+
+      render_hook(view, "load_newer", %{})
+      assert has_element?(view, message_dom_id(newest), "Arrived while away")
+      assert message_count(view, room) == @cap
+      refute has_element?(view, "#room_#{room.id}_message_pager[data-load-newer]")
+    end
+
+    test "re-rendering a message (edit, boost) doesn't change the window", %{
+      conn: conn,
+      user: user,
+      other: other,
+      room: room
+    } do
+      messages = create_messages(room, user, 350)
+      view = scrolled_back(conn, room, messages)
+      loaded = Enum.at(messages, 100)
+      trimmed_top = Enum.at(messages, 5)
+      trimmed_bottom = List.last(messages)
+
+      Chat.update_message!(loaded, %{body: "Edited in the window"}, actor: user)
+      Chat.update_message!(trimmed_top, %{body: "Edited out of the window"}, actor: user)
+      Chat.update_message!(trimmed_bottom, %{body: "Edited out of the window"}, actor: user)
+      Chat.create_boost!(loaded, "👍", actor: other)
+      Chat.create_boost!(trimmed_bottom, "👍", actor: other)
+
+      assert has_element?(view, message_dom_id(loaded), "Edited in the window")
+      assert has_element?(view, message_dom_id(loaded) <> " .boosts")
+      refute has_element?(view, message_dom_id(trimmed_top))
+      refute has_element?(view, message_dom_id(trimmed_bottom))
+      assert message_count(view, room) == @cap
+
+      # The window didn't move: the next page still starts right after its newest message
+      render_hook(view, "load_newer", %{})
+      assert has_element?(view, message_dom_id(Enum.at(messages, 330)))
+      assert has_element?(view, message_dom_id(trimmed_bottom), "Edited out of the window")
+      assert message_count(view, room) == @cap
+    end
+
+    test "deleting a message frees a slot instead of trimming another one", %{
+      conn: conn,
+      user: user,
+      room: room
+    } do
+      messages = create_messages(room, user, @cap)
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}")
+      load_older_times(view, 7)
+      assert message_count(view, room) == @cap
+
+      Chat.destroy_message!(Enum.at(messages, 150), actor: user)
+      assert message_count(view, room) == @cap - 1
+
+      newest = message_fixture(room, user, %{body: "Fills the slot"})
+      assert message_count(view, room) == @cap
+      assert has_element?(view, message_dom_id(hd(messages)))
+      assert has_element?(view, message_dom_id(newest))
+
+      message_fixture(room, user, %{body: "Now one has to go"})
+      assert message_count(view, room) == @cap
+      refute has_element?(view, message_dom_id(hd(messages)))
+    end
+
+    test "edit_last works from a scrolled-back window", %{conn: conn, user: user, room: room} do
+      messages = create_messages(room, user, 350)
+      view = scrolled_back(conn, room, messages)
+
+      render_hook(view, "edit_last", %{})
+
+      last = List.last(messages)
+      assert has_element?(view, "#edit-form-#{last.client_message_id}")
+      assert has_element?(view, message_dom_id(last))
+      assert message_count(view, room) <= @cap
     end
   end
 

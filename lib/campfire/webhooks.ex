@@ -14,6 +14,10 @@ defmodule Campfire.Webhooks do
   failed responses are logged and not retried.
 
   Replies are created with `deliver_webhooks?: false`, so bots can't loop.
+
+  The payload's `message.body.html` is rendered by the function configured as
+  `config :campfire, :message_html, {module, function}` (`CampfireWeb.MessageBody.to_html_string/1`),
+  so it matches the bot API's html without this module depending on the web layer.
   """
 
   require Ash.Query
@@ -126,7 +130,7 @@ defmodule Campfire.Webhooks do
       },
       message: %{
         id: message.id,
-        body: %{html: simple_html(Message.plain_text(message)), plain: plain},
+        body: %{html: body_html(message), plain: plain},
         path: "/rooms/#{room.id}/@#{message.id}"
       }
     }
@@ -155,12 +159,19 @@ defmodule Campfire.Webhooks do
         filename = "attachment.#{ext}"
         {:ok, key} = Uploads.store_binary(body, filename)
 
-        reply(bot, room, %{
-          attachment_key: key,
-          attachment_filename: filename,
-          attachment_content_type: if(mime == "", do: "application/octet-stream", else: mime),
-          attachment_byte_size: byte_size(body)
-        })
+        # Dimensions and a thumbnail for raster images (best effort)
+        image = Uploads.Image.attributes(Uploads.path(key), mime)
+
+        reply(
+          bot,
+          room,
+          Map.merge(image, %{
+            attachment_key: key,
+            attachment_filename: filename,
+            attachment_content_type: if(mime == "", do: "application/octet-stream", else: mime),
+            attachment_byte_size: byte_size(body)
+          })
+        )
 
       true ->
         :ok
@@ -187,14 +198,12 @@ defmodule Campfire.Webhooks do
     end
   end
 
-  defp simple_html(text) do
-    html =
-      text
-      |> Phoenix.HTML.html_escape()
-      |> Phoenix.HTML.safe_to_string()
-      |> String.replace("\n", "<br>")
-
-    "<p>#{html}</p>"
+  # The same HTML as the bot API's `body.html`. Rendering lives in the web layer
+  # (`CampfireWeb.MessageBody`, it knows the avatar and profile routes); the domain doesn't depend on
+  # it, so the renderer is wired in config as `{module, function}` and called with the message.
+  defp body_html(message) do
+    {module, function} = Application.fetch_env!(:campfire, :message_html)
+    apply(module, function, [message])
   end
 
   defp html_to_text(html) do

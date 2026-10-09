@@ -13,7 +13,7 @@ defmodule Campfire.Checks.CanCreateRooms do
   def match?(%{status: :active, role: :administrator}, _context, _opts), do: true
 
   def match?(%{status: :active, role: :member}, _context, _opts) do
-    case Campfire.Accounts.get_account!(authorize?: false) do
+    case Campfire.AccountCache.get() do
       %{restrict_room_creation_to_administrators: true} -> false
       _ -> true
     end

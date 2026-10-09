@@ -2,6 +2,11 @@ defmodule CampfireWeb.DirectPickerLive do
   @moduledoc """
   `/directs/new`: pick people to start a Ping with (docs/analysis/03-ui.md §1.10). The picker
   replaces the Pings strip at the top of the sidebar.
+
+  This is not an `AshPhoenix.Form`: the only field is a search box, the chosen people live in the
+  socket (they carry names and avatars for the chips) and the one submit calls the generic
+  `find_or_create_direct` action through its code interface, so a form would only wrap the same
+  call (the argument, policy and error handling are the action's either way).
   """
   use CampfireWeb, :live_view
 

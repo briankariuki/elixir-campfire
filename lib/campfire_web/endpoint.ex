@@ -15,6 +15,9 @@ defmodule CampfireWeb.Endpoint do
     websocket: [connect_info: [:peer_data, :x_headers, session: @session_options]],
     longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
 
+  # X-Version / X-Rev on every response, static files included
+  plug CampfireWeb.VersionHeaders
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),

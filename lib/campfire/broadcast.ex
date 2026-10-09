@@ -8,6 +8,7 @@ defmodule Campfire.Broadcast do
 
     * `"room:<id>"`: `{:message_created, message}`, `{:message_updated, message}`,
       `{:message_deleted, message}`, `{:boost_created, boost}`, `{:boost_deleted, boost}`
+      (a boost carries its `:booster` and `:message`, loaded with `Message.loads/0`)
     * `"user:<id>"`: `{:room_unread, room_id}`, `{:room_read, room_id}`, `:sidebar_changed`,
       `{:room_removed, room_id}`
   """

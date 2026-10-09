@@ -103,6 +103,8 @@ defmodule CampfireWeb.MessageComponents do
             <.presentation message={@message} content_type={@content_type} users={@users} />
           </div>
 
+          <CampfireWeb.EmbedComponents.embed :if={@mode == :room} embed={@message.embed} />
+
           <.boosts
             :if={@mode == :room}
             message={@message}
@@ -152,12 +154,33 @@ defmodule CampfireWeb.MessageComponents do
   end
 
   defp presentation(%{content_type: :attachment} = assigns) do
-    assigns = assign(assigns, url: ~p"/attachments/#{assigns.message.id}")
+    message = assigns.message
+    url = ~p"/attachments/#{message.id}"
+
+    assigns =
+      assign(assigns,
+        url: url,
+        # The thumbnail, when there is one; the lightbox and downloads use the original
+        image_url: if(message.attachment_thumbnail_key, do: url <> "?thumb=1", else: url),
+        dimensions:
+          Campfire.Uploads.Image.preview_dimensions(
+            message.attachment_width,
+            message.attachment_height
+          )
+      )
 
     ~H"""
     <%= case media_kind(@message.attachment_content_type) do %>
       <% :image -> %>
-        <div class="max-inline-size center flex overflow-clip">
+        <%!--
+          With stored dimensions the box is sized like the original's `inline_media_dimension_constraints`
+          (half the preview width, in the image's aspect ratio) so the layout doesn't jump on load.
+          Without them a fixed height does the same.
+        --%>
+        <div
+          class="max-inline-size center flex overflow-clip"
+          style={@dimensions && image_box_style(@dimensions)}
+        >
           <a
             class="flex"
             href={@url}
@@ -165,20 +188,30 @@ defmodule CampfireWeb.MessageComponents do
             data-lightbox-download={@url <> "?download=1"}
             title={@message.attachment_filename}
           >
-            <%!-- No stored dimensions: a fixed height keeps the layout (and scroll) from jumping on load --%>
-            <img
-              src={@url}
-              class="message__attachment"
-              style="block-size: min(20rem, 40vh); inline-size: auto; min-inline-size: 4rem; max-inline-size: 100%; object-fit: contain"
-              loading="lazy"
-              alt={@message.attachment_filename}
-            />
+            <%= if @dimensions do %>
+              <img
+                src={@image_url}
+                width={elem(@dimensions, 0)}
+                height={elem(@dimensions, 1)}
+                class="message__attachment"
+                loading="lazy"
+                alt={@message.attachment_filename}
+              />
+            <% else %>
+              <img
+                src={@image_url}
+                class="message__attachment"
+                style="block-size: min(20rem, 40vh); inline-size: auto; min-inline-size: 4rem; max-inline-size: 100%; object-fit: contain"
+                loading="lazy"
+                alt={@message.attachment_filename}
+              />
+            <% end %>
           </a>
         </div>
       <% :video -> %>
         <video src={@url} class="message__attachment max-inline-size" controls preload="metadata"></video>
       <% :other -> %>
-        <div class="flex-inline align-center gap-half pad-inline pad-block-half">
+        <div class="flex-inline align-center gap-half">
           <img
             src={~p"/images/common-file-text.svg"}
             width="22"
@@ -187,10 +220,31 @@ defmodule CampfireWeb.MessageComponents do
             aria-hidden="true"
           />
           <span class="overflow-ellipsis">{@message.attachment_filename}</span>
-          <a class="btn btn--plain" href={@url <> "?download=1"} download>
+          <%!-- The original's small, borderless message action button (Messages::AttachmentPresentation) --%>
+          <a
+            class="btn message__action-btn"
+            style="--width: auto;"
+            href={@url <> "?download=1"}
+            download
+          >
             <img src={~p"/images/download.svg"} width="20" height="20" aria-hidden="true" />
             <span class="for-screen-reader">Download {@message.attachment_filename}</span>
           </a>
+          <button
+            id={"share-file-#{@message.client_message_id}"}
+            type="button"
+            class="btn message__action-btn"
+            style="--width: auto;"
+            phx-hook="Share"
+            phx-update="ignore"
+            data-share-url={@url <> "?download=1"}
+            data-share-title={@message.attachment_filename}
+            data-share-type={@message.attachment_content_type}
+            hidden
+          >
+            <img src={~p"/images/share.svg"} width="20" height="20" aria-hidden="true" />
+            <span class="for-screen-reader">Share {@message.attachment_filename}</span>
+          </button>
         </div>
     <% end %>
     """
@@ -198,9 +252,13 @@ defmodule CampfireWeb.MessageComponents do
 
   defp presentation(assigns) do
     ~H"""
-    {MessageBody.to_html(@message, @users)}
+    {MessageBody.cached_html(@message, @users, live: true)}
     """
   end
+
+  # `width: <preview width / 2>px; aspect-ratio: w / h`, like the original's inline media wrapper
+  defp image_box_style({width, height}),
+    do: "width: #{div(width, 2)}px; aspect-ratio: #{width} / #{height};"
 
   # Only types the attachment controller serves inline can be embedded (e.g. not SVG)
   defp media_kind(content_type) do
@@ -403,13 +461,37 @@ defmodule CampfireWeb.MessageComponents do
               />
             </a>
             <button
+              :if={@content_type == :attachment}
+              id={"share-#{@message.client_message_id}"}
+              type="button"
+              class="btn message__action-btn center full-width"
+              title="Share"
+              aria-label="Share"
+              phx-hook="Share"
+              phx-update="ignore"
+              data-share-url={~p"/attachments/#{@message.id}?download=1"}
+              data-share-title={@message.attachment_filename}
+              data-share-type={@message.attachment_content_type}
+              hidden
+            >
+              <img
+                src={~p"/images/share.svg"}
+                class="colorize--black"
+                width="20"
+                height="20"
+                aria-hidden="true"
+              />
+            </button>
+            <button
               :if={@content_type != :attachment}
               type="button"
               class="btn message__action-btn center full-width"
               title="Reply"
               aria-label="Reply"
-              phx-click="reply"
-              phx-value-id={@message.id}
+              phx-click={
+                JS.push("reply", value: %{id: @message.id})
+                |> JS.remove_attribute("open", to: {:closest, "details"})
+              }
             >
               <img
                 src={~p"/images/reply.svg"}

@@ -26,6 +26,11 @@ defmodule Campfire.WebhooksTest do
     end)
   end
 
+  defp mention_html(user) do
+    ~s(<span class="mention"><a class="btn avatar" href="/users/#{user.id}" title="#{user.name}">) <>
+      ~s(<img src="#{CampfireWeb.Paths.avatar_path(user)}" alt="" aria-hidden="true"></a> #{user.name}</span>)
+  end
+
   defp bot_messages(room, bot) do
     room.id
     |> Chat.page_messages!(actor: bot)
@@ -52,12 +57,43 @@ defmodule Campfire.WebhooksTest do
              },
              "message" => %{
                "id" => message.id,
-               "body" => %{"html" => "<p>@Helper  what&#39;s up?</p>", "plain" => "what's up?"},
+               "body" => %{
+                 "html" =>
+                   ~s(<div class="lexxy-content">) <>
+                     mention_html(bot) <> "  what&#39;s up?</div>",
+                 "plain" => "what's up?"
+               },
                "path" => "/rooms/#{room.id}/@#{message.id}"
              }
            }
 
     assert [%{body: "Hi David!"}] = bot_messages(room, bot)
+  end
+
+  test "the html is the bot API's: links, quotes, cites and mentions", %{
+    user: user,
+    bot: bot,
+    room: room
+  } do
+    stub_webhook(&Req.Test.text(&1, ""))
+
+    body = "> see https://once.com/?a=1&b=2\n— Ann /rooms/#{room.id}/@5\n\n@Helper <b>look</b>"
+    message = message_fixture(room, user, body: body)
+
+    assert_received {:webhook, "/helper", payload}
+
+    assert payload["message"]["body"]["html"] ==
+             ~s(<div class="lexxy-content"><blockquote>see ) <>
+               ~s(<a href="https://once.com/?a=1&amp;b=2" target="_blank" rel="noopener">) <>
+               ~s(https://once.com/?a=1&amp;b=2</a></blockquote>) <>
+               ~s(<cite>Ann <a href="/rooms/#{room.id}/@5">#</a></cite>) <>
+               mention_html(bot) <> " &lt;b&gt;look&lt;/b&gt;</div>"
+
+    # exactly what the bot API serves for the same message
+    message = Ash.load!(message, :creator, authorize?: false)
+
+    assert payload["message"]["body"]["html"] ==
+             CampfireWeb.BotJSON.message(message).body.html
   end
 
   test "no webhook without a mention in shared rooms", %{user: user, room: room} do

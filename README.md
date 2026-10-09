@@ -3,6 +3,7 @@
 A port of Basecamp's [Campfire](https://github.com/basecamp/once-campfire) group chat to Elixir:
 **Phoenix + LiveView** for the web, **Ash Framework** (with AshPostgres) for the domain.
 
+- [Parity with once-campfire](#parity-with-once-campfire): what matches the original, what differs, what's not ported
 - `docs/PORTING.md`: the design and port plan (what was kept, simplified or dropped)
 - `docs/DOMAIN_API.md`: the domain functions the web layer calls
 - `docs/analysis/`: notes on how the original Rails app works
@@ -58,6 +59,50 @@ curl http://localhost:4000/rooms/1/<bot_key>/messages                           
 
 When a bot has a webhook URL, it receives a JSON `POST` each time it is @mentioned, and for every message in a DM with
 the bot. A `text/plain` or `text/html` response is posted back as the bot's reply. See `docs/PORTING.md` §5.
+
+## Parity with once-campfire
+
+The port aims for feature parity with [basecamp/once-campfire](https://github.com/basecamp/once-campfire). It reuses
+the original's CSS, markup, icons and sounds, and keeps its bot API and webhook contracts.
+
+### Same as the original
+
+| Area | Features |
+|---|---|
+| Setup and accounts | First run, join link with a regenerable code, sign in (rate limited: 10 per 3 min per IP), session transfer links (4 h) with QR code, profiles (name, email, password, bio, avatar), generated initials avatars |
+| Rooms | Open, closed and direct rooms; group Pings; the involvement bell (4 levels, `invisible` hides a room); unread marks that skip people viewing the room; create, edit and delete rooms; the member filter for more than 20 people; restricting room creation to admins; the welcome card with the invite link |
+| Messages | Text and one attachment per message. Images show inline (thumbnails, stored dimensions, lightbox); other files have Download and Share. Also: @mentions resolved when saved, 8 quick boosts plus custom boosts, reply with quote and attribution, inline edit and delete, permalinks and copy link, 56 `/play` sounds, link previews (OpenGraph), threaded and first-of-day grouping |
+| Composer | Enter to send (Cmd/Ctrl+Enter always), formatting toolbar, @mention autocomplete, per-room drafts, typing indicator, pasted and dropped files (up to 10, one message each), disabled after 5 s offline, ArrowUp to edit your last message |
+| Scrolling | Infinite scroll in both directions, the DOM trimmed to 300 messages, permalinks opening at the linked message |
+| Search | Full-text search of your rooms with your 10 recent searches |
+| Admin | Roles, deactivate, ban (IP bans, plus deleting the user's messages in the background), bots, account name and logo, custom CSS |
+| Bots | The same bot API endpoints, status codes, headers and JSON shapes. Webhooks with the same payload: text or attachment replies, and a 7 s timeout reply |
+| Other | Translation popups, the incompatible-browser page, `X-Version`/`X-Rev` headers, dark mode |
+
+### Different by design
+
+| Original | This port |
+|---|---|
+| ActionText rich text (Lexxy editor, HTML) | A plain-text body with a safe Markdown-like subset: bold, italic, strike, highlight, code, code blocks, h1, nested lists, `[text](url)` links, `>` quotes. The toolbar inserts that syntax |
+| SQLite with FTS5 | Postgres (AshPostgres), with a generated `tsvector` column for search |
+| ActionCable and Turbo Streams, a heartbeat channel and `/rooms/:id/refresh` | Phoenix PubSub and LiveView. A reconnect remounts the page, which replaces the refresh endpoint and the heartbeat |
+| Resque and Redis jobs | Oban through AshOban, in the same Postgres: webhook delivery, ban cleanup, link previews |
+| ActiveStorage | Files on local disk (`UPLOADS_DIR`); `vix` makes the thumbnails |
+| Link previews embedded in the rich text | Stored on the message by a background job, with SSRF guards. The link text stays in the message |
+| Turbo's infinite scroll | A small `MessagePager` hook, which avoids a LiveView 1.2 stream-ordering bug |
+
+Additions with no counterpart in the original:
+- AshAdmin at `/admin` for administrators
+- the `/blocked` page for banned IPs on LiveView sockets
+- `TRUST_PROXY_HEADERS` for running behind a proxy
+- the Docker Compose and Caddy setup
+
+### Not ported
+
+- **Web Push notifications and the installable app (PWA manifest, service worker).** Without push, the `mentions`, `everything` and `nothing` bell levels change nothing; `invisible` still hides the room.
+- **Sentry and the ONCE `Purchaser` licensing.**
+- **Video poster thumbnails**, which need `ffmpeg`. Videos play with the browser's controls.
+- **Syntax highlighting of code blocks** (highlight.js).
 
 ## Layout
 

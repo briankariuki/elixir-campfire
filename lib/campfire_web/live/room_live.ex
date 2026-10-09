@@ -7,12 +7,14 @@ defmodule CampfireWeb.RoomLive do
 
   alias Campfire.{Accounts, Broadcast, Chat, Presence, Uploads}
   alias Campfire.Chat.Message
-  alias CampfireWeb.{MessageComponents, Sidebar}
+  alias CampfireWeb.{MessageComponents, RoomComponents, Sidebar}
 
   on_mount Sidebar
 
   @loads [:creator, boosts: [:booster]]
   @page_size Message.page_size()
+  # The DOM keeps at most this many messages (like the original Campfire, which trims to ~300)
+  @max_messages 300
   @typing_timeout 5_000
 
   @shared_involvements [:mentions, :everything, :nothing, :invisible]
@@ -30,7 +32,7 @@ defmodule CampfireWeb.RoomLive do
     user = socket.assigns.current_user
 
     with {id, ""} <- Integer.parse(params["id"] || ""),
-         {:ok, room} <- Chat.get_room(id, actor: user, load: [:users]) do
+         {:ok, room} <- Chat.get_room_with_members(id, actor: user) do
       {:ok, mount_room(socket, room, params["message_id"])}
     else
       _ ->
@@ -59,12 +61,12 @@ defmodule CampfireWeb.RoomLive do
       current_room_id: room.id,
       users: Map.new(room.users, &{&1.id, &1}),
       page_title: Sidebar.room_name(room, user),
-      body_class: "sidebar",
       typing: %{},
       present?: false,
       editing_id: nil,
       boosting_id: nil
     )
+    |> assign(RoomComponents.room_assigns(room, user))
     |> allow_upload(:attachments,
       accept: :any,
       max_entries: 10,
@@ -114,25 +116,73 @@ defmodule CampfireWeb.RoomLive do
   end
 
   defp assign_page(socket, page, more_older?, more_newer?) do
-    assign(socket,
-      oldest_id: page |> List.first() |> then(&(&1 && &1.id)),
-      newest_id: page |> List.last() |> then(&(&1 && &1.id)),
-      more_older?: more_older?,
-      more_newer?: more_newer?
+    socket
+    |> assign(more_older?: more_older?, more_newer?: more_newer?)
+    |> put_window(Enum.map(page, & &1.id))
+  end
+
+  # The window is the ascending ids of the messages in the stream (at most @max_messages, so it's
+  # cheap to keep). Streams don't keep items on the server, so this is how we know which messages
+  # are in the DOM. The paging cursors always point at its two ends: `load_older` pages before
+  # `oldest_id` and `load_newer` after `newest_id`, which also brings back whatever was trimmed.
+  defp put_window(socket, ids) do
+    assign(socket, loaded_ids: ids, oldest_id: List.first(ids), newest_id: List.last(ids))
+  end
+
+  # Adds messages (ascending, newer than the whole window) at the bottom, trimming the oldest ones
+  # off the top. Anything trimmed makes `more_older?` true.
+  defp append_messages(socket, []), do: socket
+
+  defp append_messages(socket, messages) do
+    ids = socket.assigns.loaded_ids ++ Enum.map(messages, & &1.id)
+    trimmed? = length(ids) > @max_messages
+
+    socket
+    |> put_window(Enum.take(ids, -@max_messages))
+    |> update(:more_older?, &(&1 or trimmed?))
+    |> stream(:messages, Enum.map(messages, &decorate(socket, &1)), limit: -@max_messages)
+  end
+
+  # Adds messages (ascending, older than the whole window) at the top, trimming the newest ones off
+  # the bottom. Anything trimmed makes `more_newer?` true.
+  defp prepend_messages(socket, []), do: socket
+
+  defp prepend_messages(socket, messages) do
+    ids = Enum.map(messages, & &1.id) ++ socket.assigns.loaded_ids
+    trimmed? = length(ids) > @max_messages
+
+    socket
+    |> put_window(Enum.take(ids, @max_messages))
+    |> update(:more_newer?, &(&1 or trimmed?))
+    # Each item is inserted at index 0 in turn, so insert newest first to end up ascending
+    |> stream(:messages, messages |> Enum.map(&decorate(socket, &1)) |> Enum.reverse(),
+      at: 0,
+      limit: @max_messages
     )
+  end
+
+  # Takes a deleted message out of the window: the stream limit counts DOM items, so the ids must
+  # not outlive them
+  defp drop_message(socket, message) do
+    ids = socket.assigns.loaded_ids
+
+    socket =
+      cond do
+        message.id not in ids -> socket
+        # Keep the cursors if nothing is left, an empty window can't be paged from
+        ids == [message.id] -> assign(socket, loaded_ids: [])
+        true -> put_window(socket, List.delete(ids, message.id))
+      end
+
+    stream_delete(socket, :messages, message)
   end
 
   defp page(socket, cursor) do
     Chat.page_messages!(socket.assigns.room.id, cursor, actor: socket.assigns.current_user)
   end
 
-  # Whether a message falls in the range of messages loaded in the stream
-  defp loaded?(socket, message) do
-    %{oldest_id: oldest, newest_id: newest, more_newer?: more_newer?} = socket.assigns
-
-    (is_nil(oldest) or message.id >= oldest) and
-      (not more_newer? or is_nil(newest) or message.id <= newest)
-  end
+  # Whether a message is in the stream (the trimmed window, not everything ever loaded)
+  defp loaded?(socket, message), do: message.id in socket.assigns.loaded_ids
 
   ## Presence
 
@@ -168,8 +218,7 @@ defmodule CampfireWeb.RoomLive do
     socket =
       socket
       |> assign(more_older?: length(older) >= @page_size)
-      |> assign(oldest_id: if(older == [], do: socket.assigns.oldest_id, else: hd(older).id))
-      |> stream(:messages, Enum.reverse(older), at: 0)
+      |> prepend_messages(older)
 
     {:noreply, socket}
   end
@@ -182,10 +231,7 @@ defmodule CampfireWeb.RoomLive do
     socket =
       socket
       |> assign(more_newer?: length(newer) >= @page_size)
-      |> assign(
-        newest_id: if(newer == [], do: socket.assigns.newest_id, else: List.last(newer).id)
-      )
-      |> stream(:messages, newer)
+      |> append_messages(newer)
 
     {:noreply, socket}
   end
@@ -208,6 +254,18 @@ defmodule CampfireWeb.RoomLive do
     {:noreply, socket}
   end
 
+  # The composer lost focus or was emptied
+  def handle_event("stop_typing", _params, socket) do
+    broadcast_typing(socket, :stop)
+    {:noreply, socket}
+  end
+
+  # `@` autocomplete in the composer (Composer hook): the room's members matching what was typed
+  # after the `@`. Only members of this room are offered, and only to a member of it.
+  def handle_event("mention_search", %{"query" => query}, socket) when is_binary(query) do
+    {:reply, %{users: mention_matches(socket, query)}, socket}
+  end
+
   def handle_event("send", params, socket) do
     body = params |> Map.get("body", "") |> String.trim_trailing()
 
@@ -228,6 +286,8 @@ defmodule CampfireWeb.RoomLive do
 
   def handle_event("edit_last", _params, socket) do
     user = socket.assigns.current_user
+    # The last messages must be the ones in the stream, not an older window
+    socket = if socket.assigns.more_newer?, do: load_last_page(socket), else: socket
 
     case socket |> page(%{}) |> Enum.filter(&(&1.creator_id == user.id)) |> List.last() do
       nil -> {:noreply, socket}
@@ -243,13 +303,8 @@ defmodule CampfireWeb.RoomLive do
 
   def handle_event("reply", %{"id" => id}, socket) do
     with_message(socket, id, fn message ->
-      quoted =
-        message.body
-        |> String.split(~r/\r?\n/)
-        |> Enum.reject(&String.starts_with?(&1, ">"))
-        |> Enum.map_join("\n", &"> #{&1}")
-
-      push_event(socket, "composer:insert", %{text: quoted <> "\n"})
+      # "> quote\n— Author /rooms/1/@123\n\n" (rendered as blockquote + cite by MessageBody)
+      push_event(socket, "composer:insert", %{text: CampfireWeb.MessageBody.reply_text(message)})
     end)
   end
 
@@ -273,7 +328,7 @@ defmodule CampfireWeb.RoomLive do
   def handle_event("delete_message", %{"id" => id}, socket) do
     with_message(socket, id, fn message ->
       case Chat.destroy_message(message, actor: socket.assigns.current_user) do
-        :ok -> stream_delete(socket, :messages, message)
+        :ok -> drop_message(socket, message)
         {:error, error} -> put_flash(socket, :error, error_message(error, "delete"))
       end
     end)
@@ -323,32 +378,37 @@ defmodule CampfireWeb.RoomLive do
 
   @impl true
   def handle_info({:message_created, message}, socket) do
-    if socket.assigns.more_newer? do
-      {:noreply, socket}
-    else
-      socket =
-        socket
-        |> assign(newest_id: max(message.id, socket.assigns.newest_id || 0))
-        |> assign(oldest_id: socket.assigns.oldest_id || message.id)
-        |> insert_message(message)
-        |> stop_typing(message.creator_id)
+    cond do
+      # Scrolled back from the live end: load_newer fetches it when the user gets there
+      socket.assigns.more_newer? ->
+        {:noreply, socket}
 
-      {:noreply, maybe_play_sound(socket, message)}
+      loaded?(socket, message) ->
+        {:noreply, insert_message(socket, message)}
+
+      true ->
+        socket =
+          socket
+          |> append_messages([message])
+          |> stop_typing(message.creator_id)
+
+        {:noreply, maybe_play_sound(socket, message)}
     end
   end
 
   def handle_info({:message_updated, message}, socket) do
-    if loaded?(socket, message),
-      do: {:noreply, insert_message(socket, message)},
-      else: {:noreply, socket}
+    {:noreply, insert_message(socket, message)}
   end
 
   def handle_info({:message_deleted, message}, socket) do
-    {:noreply, stream_delete(socket, :messages, message)}
+    {:noreply, drop_message(socket, message)}
   end
 
-  def handle_info({event, boost}, socket) when event in [:boost_created, :boost_deleted] do
-    {:noreply, reinsert_message(socket, boost.message_id)}
+  # The broadcast carries the message with its boosts, read once for every viewer
+  # (`Campfire.PubSubBroadcaster`); nil when the message was deleted meanwhile
+  def handle_info({event, %{message: %Message{} = message}}, socket)
+      when event in [:boost_created, :boost_deleted] do
+    {:noreply, insert_message(socket, message)}
   end
 
   def handle_info({:typing, :start, %{id: id, name: name}}, socket) do
@@ -388,17 +448,22 @@ defmodule CampfireWeb.RoomLive do
     end
   end
 
-  # Every stream insert goes through here, so a message re-inserted on an update or a boost keeps
-  # the user's open edit or custom boost form
+  # Re-renders a message that's in the stream, in place: the window and the stream limit don't
+  # change. Messages outside the window are ignored (new ones go through append_messages/2).
   defp insert_message(socket, message) do
+    if loaded?(socket, message),
+      do: stream_insert(socket, :messages, decorate(socket, message)),
+      else: socket
+  end
+
+  # Every message put in the stream goes through here, so one re-inserted on an update or a boost
+  # keeps the user's open edit or custom boost form
+  defp decorate(socket, message) do
     %{editing_id: editing_id, boosting_id: boosting_id} = socket.assigns
 
-    message =
-      message
-      |> Ash.Resource.put_metadata(:editing, message.id == editing_id)
-      |> Ash.Resource.put_metadata(:boosting, message.id == boosting_id)
-
-    stream_insert(socket, :messages, message)
+    message
+    |> Ash.Resource.put_metadata(:editing, message.id == editing_id)
+    |> Ash.Resource.put_metadata(:boosting, message.id == boosting_id)
   end
 
   # Opens the edit (`:editing_id`) or custom boost (`:boosting_id`) form on `message`, or closes it
@@ -423,11 +488,11 @@ defmodule CampfireWeb.RoomLive do
     if socket.assigns[key] == id, do: assign(socket, key, nil), else: socket
   end
 
-  # Re-fetches a message and re-inserts it if it's still visible to the user and in the loaded range
+  # Re-fetches a message and re-inserts it if it's still visible to the user and in the window
   defp reinsert_message(socket, id) do
     case Chat.get_message(id, actor: socket.assigns.current_user, load: @loads) do
       {:ok, %{room_id: room_id} = message} when room_id == socket.assigns.room.id ->
-        if loaded?(socket, message), do: insert_message(socket, message), else: socket
+        insert_message(socket, message)
 
       _ ->
         socket
@@ -460,23 +525,26 @@ defmodule CampfireWeb.RoomLive do
     results =
       for entry <- done do
         consume_uploaded_entry(socket, entry, fn %{path: path} ->
+          content_type =
+            Uploads.normalize_content_type(entry.client_type) || MIME.from_path(entry.client_name)
+
+          # Dimensions and a thumbnail for raster images; best effort, never fails the upload
+          image = Uploads.Image.attributes(path, content_type)
+
           with {:ok, key} <- Uploads.store(path, entry.client_name),
-               {:ok, message} <-
-                 Chat.create_message(
-                   room,
-                   %{
-                     attachment_key: key,
-                     attachment_filename: entry.client_name,
-                     attachment_content_type:
-                       Uploads.normalize_content_type(entry.client_type) ||
-                         MIME.from_path(entry.client_name),
-                     attachment_byte_size: entry.client_size
-                   },
-                   actor: user
-                 ) do
+               attrs =
+                 Map.merge(image, %{
+                   attachment_key: key,
+                   attachment_filename: entry.client_name,
+                   attachment_content_type: content_type,
+                   attachment_byte_size: entry.client_size
+                 }),
+               {:ok, message} <- Chat.create_message(room, attrs, actor: user) do
             {:ok, {:ok, message}}
           else
-            error -> {:ok, error}
+            error ->
+              Uploads.delete(image[:attachment_thumbnail_key])
+              {:ok, error}
           end
         end)
       end
@@ -504,6 +572,25 @@ defmodule CampfireWeb.RoomLive do
 
   defp stop_typing(socket, user_id), do: update(socket, :typing, &Map.delete(&1, user_id))
 
+  @mention_limit 8
+
+  # Members whose name, or any word of it, starts with `query` (case-insensitive), by name
+  defp mention_matches(%{assigns: %{membership: nil}}, _query), do: []
+
+  defp mention_matches(socket, query) do
+    query = query |> String.slice(0, 50) |> String.trim_leading() |> String.downcase()
+
+    socket.assigns.users
+    |> Map.values()
+    |> Enum.filter(fn user ->
+      name = String.downcase(user.name)
+      String.starts_with?(name, query) or String.contains?(name, " " <> query)
+    end)
+    |> Enum.sort_by(&{String.downcase(&1.name), &1.id})
+    |> Enum.take(@mention_limit)
+    |> Enum.map(&%{id: &1.id, name: &1.name, avatar: CampfireWeb.Paths.avatar_path(&1)})
+  end
+
   defp next_involvement(room, current) do
     order = if room.kind == :direct, do: @direct_involvements, else: @shared_involvements
     index = Enum.find_index(order, &(&1 == current)) || -1
@@ -526,6 +613,8 @@ defmodule CampfireWeb.RoomLive do
     ~H"""
     <Layouts.app flash={@flash} current_user={@current_user}>
       <:nav>
+        <RoomComponents.nav_logo account={@account} />
+
         <span class="btn btn--reversed btn--faux room--current">
           <h1 class="room__contents txt-medium overflow-ellipsis">
             <span :if={@room.kind == :direct} class="for-screen-reader">Ping with</span>
@@ -564,26 +653,34 @@ defmodule CampfireWeb.RoomLive do
         phx-hook="Lightbox"
         phx-drop-target={@uploads.attachments.ref}
       >
-        <%!-- LiveView's own infinite-scroll hook takes over the element with phx-viewport-*, so the
-             stream lives in an inner (display: contents) element and MessageList on the scroller.
-             A display: contents element has no box (its rect is all zeros), so the hook's "scrolled
-             past the top" check measures the start sentinel instead: absolutely positioned at the
-             top of the scroller's content, it scrolls with the messages without taking a grid row. --%>
+        <%!-- The pager (MessagePager hook) loads older/newer pages on scroll. It's an empty, absolutely
+             positioned element (so it takes no grid row) and not the stream: LiveView's own
+             `phx-viewport-*` hook locks the element it pushes from while an event is in flight, and
+             overlapping locked stream patches come out in the wrong order. --%>
         <div id={"room_#{@room.id}_messages"} class="messages" phx-hook="MessageList">
           <div
-            id={"room_#{@room.id}_messages_start"}
+            id={"room_#{@room.id}_message_pager"}
+            phx-hook="MessagePager"
+            data-load-older={@more_older? && "load_older"}
+            data-load-newer={@more_newer? && "load_newer"}
             style="position: absolute; inset-block-start: 0; block-size: 0; inline-size: 0"
             aria-hidden="true"
           >
           </div>
-          <div
-            id={"room_#{@room.id}_message_stream"}
-            phx-update="stream"
-            phx-viewport-top={@more_older? && "load_older"}
-            phx-viewport-bottom={@more_newer? && "load_newer"}
-            phx-viewport-overrun-target={"room_#{@room.id}_messages_start"}
-            style="display: contents"
-          >
+          <RoomComponents.system_welcome
+            :if={
+              RoomComponents.show_welcome?(
+                @original_room?,
+                @account,
+                @more_older?,
+                @more_newer?,
+                @loaded_ids
+              )
+            }
+            account={@account}
+            invite_url={@invite_url}
+          />
+          <div id={"room_#{@room.id}_message_stream"} phx-update="stream" style="display: contents">
             <MessageComponents.message
               :for={{dom_id, message} <- @streams.messages}
               id={dom_id}
@@ -604,7 +701,7 @@ defmodule CampfireWeb.RoomLive do
       <div id="visibility" phx-hook="Visibility" hidden></div>
 
       <:footer>
-        <.composer uploads={@uploads} typing={typing_names(@typing)} />
+        <.composer room_id={@room.id} uploads={@uploads} typing={typing_names(@typing)} />
       </:footer>
 
       <:sidebar>
@@ -618,8 +715,27 @@ defmodule CampfireWeb.RoomLive do
     """
   end
 
+  # The formatting toolbar (composer_toolbar.js): {format, label, icon}, the icon being a monochrome
+  # SVG file in priv/static/images. Shown by the rich text button.
+  defp format_buttons do
+    [
+      {"bold", "Bold", "format-bold.svg"},
+      {"italic", "Italic", "format-italic.svg"},
+      {"strike", "Strikethrough", "format-strike.svg"},
+      {"highlight", "Highlight", "format-highlight.svg"},
+      {"code", "Code", "format-code.svg"},
+      {"codeblock", "Code block", "format-code-block.svg"},
+      {"heading", "Heading", "format-heading.svg"},
+      {"quote", "Quote", "format-quote.svg"},
+      {"bullet", "Bulleted list", "format-bullets.svg"},
+      {"number", "Numbered list", "format-numbers.svg"},
+      {"link", "Link", "link.svg"}
+    ]
+  end
+
   attr :uploads, :map, required: true
   attr :typing, :string, default: ""
+  attr :room_id, :integer, required: true
 
   defp composer(assigns) do
     ~H"""
@@ -688,7 +804,32 @@ defmodule CampfireWeb.RoomLive do
                     placeholder="Write a message…"
                     phx-hook="Composer"
                     phx-debounce="blur"
+                    data-room-id={@room_id}
+                    data-mention-menu="composer-mentions"
+                    data-toolbar="composer-toolbar"
+                    data-toolbar-toggle="composer-toolbar-toggle"
                   ></textarea>
+
+                  <%!-- Formatting toolbar: opened by the rich text button, its state kept by the Composer hook --%>
+                  <div
+                    id="composer-toolbar"
+                    class="composer__toolbar"
+                    role="toolbar"
+                    aria-label="Text formatting"
+                    phx-update="ignore"
+                    hidden
+                  >
+                    <button
+                      :for={{format, label, icon} <- format_buttons()}
+                      type="button"
+                      class="btn btn--borderless composer__format-btn"
+                      data-format={format}
+                      title={label}
+                      aria-label={label}
+                    >
+                      <img src={~p"/images/#{icon}"} width="20" height="20" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
 
                 <label class="btn btn--borderless txt-small flex-item-no-shrink composer__attachment-btn input--file">
@@ -702,6 +843,24 @@ defmodule CampfireWeb.RoomLive do
                   <.live_file_input upload={@uploads.attachments} />
                   <span class="for-screen-reader">Attach a file</span>
                 </label>
+
+                <button
+                  id="composer-toolbar-toggle"
+                  type="button"
+                  class="btn btn--borderless txt-small flex-item-no-shrink composer__rich-text-btn"
+                  aria-controls="composer-toolbar"
+                  aria-expanded="false"
+                  phx-update="ignore"
+                >
+                  <img
+                    src={~p"/images/text-options.svg"}
+                    width="20"
+                    height="20"
+                    class="colorize--black"
+                    aria-hidden="true"
+                  />
+                  <span class="for-screen-reader">Rich text</span>
+                </button>
 
                 <button type="submit" class="btn btn--reversed flex-item-no-shrink txt-small">
                   <img src={~p"/images/arrow-up.svg"} width="20" height="20" aria-hidden="true" />
@@ -719,6 +878,17 @@ defmodule CampfireWeb.RoomLive do
           <div class="typing-indicator__author spinner">{@typing}</div>
         </div>
       </form>
+
+      <%!-- The @ mention menu, filled in by the Composer hook (so LiveView leaves it alone) --%>
+      <div
+        id="composer-mentions"
+        class="autocomplete__list composer__mentions"
+        role="listbox"
+        aria-label="Mention a member"
+        phx-update="ignore"
+        hidden
+      >
+      </div>
     </div>
     """
   end

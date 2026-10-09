@@ -16,7 +16,10 @@ export default {
     this.returnButton = this.el.parentElement.querySelector(".message-area__return-to-latest")
     this.returnButton?.addEventListener("click", () => this.scrollToBottom())
 
-    this.pinned = true
+    // Opening a permalink shows the linked message, not the bottom (a pinned list would jump to it)
+    const highlighted = this.el.querySelector(".search-highlight")
+    this.pinned = !highlighted
+
     this.el.addEventListener("scroll", () => {
       this.pinned = this.isNearBottom()
       if (this.pinned) this.toggleReturnButton(false)
@@ -34,7 +37,6 @@ export default {
     this.mutationObserver.observe(this.el, {childList: true, subtree: true, attributeFilter: ["class"]})
     this.format()
 
-    const highlighted = this.el.querySelector(".search-highlight")
     highlighted ? highlighted.scrollIntoView({block: "center"}) : this.scrollToBottom()
   },
 

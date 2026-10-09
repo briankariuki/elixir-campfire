@@ -2,6 +2,8 @@ defmodule CampfireWeb.AttachmentController do
   @moduledoc """
   `GET /attachments/:message_id`: serves a message's attachment to members of its room.
   `?download=1` sends it as a download; only allowlisted images, video and audio are shown inline.
+  `?thumb=1` serves the image's downscaled thumbnail instead, when it has one (else the original);
+  a download is always the original.
   """
   use CampfireWeb, :controller
 
@@ -20,11 +22,13 @@ defmodule CampfireWeb.AttachmentController do
          true <- Uploads.exists?(key) do
       content_type = Uploads.normalize_content_type(message.attachment_content_type)
       inline? = inline_type?(content_type)
+      download? = params["download"] in ["1", "true"]
+      disposition = if download? or not inline?, do: "attachment", else: "inline"
 
-      disposition =
-        if params["download"] in ["1", "true"] or not inline?,
-          do: "attachment",
-          else: "inline"
+      file_key =
+        if params["thumb"] in ["1", "true"] and inline? and not download?,
+          do: thumbnail_key(message, content_type) || key,
+          else: key
 
       conn
       |> put_resp_content_type(
@@ -35,11 +39,18 @@ defmodule CampfireWeb.AttachmentController do
       |> put_resp_header("x-content-type-options", "nosniff")
       |> put_resp_header("content-security-policy", "sandbox")
       |> put_resp_header("cache-control", "private, max-age=31536000")
-      |> send_file(200, Uploads.path(key))
+      |> send_file(200, Uploads.path(file_key))
     else
       _ -> conn |> put_status(:not_found) |> text("Not found")
     end
   end
+
+  # The thumbnail has the original's format; only raster images ever get one.
+  defp thumbnail_key(%{attachment_thumbnail_key: key}, content_type) when is_binary(key) do
+    if content_type in ~w(image/png image/jpeg image/webp) and Uploads.exists?(key), do: key
+  end
+
+  defp thumbnail_key(_message, _content_type), do: nil
 
   @doc "Whether a (normalized) content type is shown inline rather than downloaded."
   def inline_type?(content_type), do: content_type in @inline_types

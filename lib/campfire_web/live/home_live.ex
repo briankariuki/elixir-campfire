@@ -1,6 +1,6 @@
 defmodule CampfireWeb.HomeLive do
   @moduledoc """
-  `/`: goes to the last room you visited (if you're still a member), else your first room by name,
+  `/`: goes to the last room you visited (if you're still a member), else your oldest room,
   else shows an empty state.
   """
   use CampfireWeb, :live_view
@@ -26,7 +26,7 @@ defmodule CampfireWeb.HomeLive do
          {:ok, room} <- Chat.get_room(id, actor: user) do
       room
     else
-      _ -> List.first(Chat.list_rooms!(actor: user))
+      _ -> Chat.oldest_room!(actor: user)
     end
   end
 

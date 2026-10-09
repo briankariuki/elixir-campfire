@@ -26,13 +26,32 @@ defmodule Campfire.Chat.Room do
   actions do
     defaults [:read]
 
+    read :with_members do
+      description """
+      The room with its members as light cards (`id`, `name`, `avatar_key` only): what a room page
+      needs, without every member's other attributes.
+      """
+
+      get? true
+      argument :id, :integer, allow_nil?: false
+      filter expr(id == ^arg(:id))
+      prepare Campfire.Chat.Room.Preparations.LoadMemberCards
+    end
+
     read :for_user do
       description "The actor's rooms, ordered by name."
       prepare build(sort: [sort_name: :asc, id: :asc])
     end
 
+    read :oldest_for_user do
+      description "The actor's oldest room (all kinds): where `/` lands without a valid last room."
+      get? true
+      prepare build(sort: [inserted_at: :asc, id: :asc], limit: 1)
+    end
+
     create :create_open do
       accept [:name]
+      validate present(:name), message: "can't be blank"
       change set_attribute(:kind, :open)
       change relate_actor(:creator)
       change Changes.GrantActiveUsers
@@ -42,6 +61,7 @@ defmodule Campfire.Chat.Room do
     create :create_closed do
       accept [:name]
       argument :user_ids, {:array, :integer}, default: []
+      validate present(:name), message: "can't be blank"
       change set_attribute(:kind, :closed)
       change relate_actor(:creator)
       change Changes.ReviseMembers
@@ -68,6 +88,7 @@ defmodule Campfire.Chat.Room do
 
     update :update_open do
       accept [:name]
+      validate present(:name), message: "can't be blank"
 
       validate attribute_does_not_equal(:kind, :direct),
         message: "can't be changed for a direct room"
@@ -80,6 +101,7 @@ defmodule Campfire.Chat.Room do
     update :update_closed do
       accept [:name]
       argument :user_ids, {:array, :integer}, default: []
+      validate present(:name), message: "can't be blank"
 
       validate attribute_does_not_equal(:kind, :direct),
         message: "can't be changed for a direct room"

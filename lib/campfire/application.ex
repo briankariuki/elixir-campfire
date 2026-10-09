@@ -14,6 +14,8 @@ defmodule Campfire.Application do
       {DNSCluster, query: Application.get_env(:campfire, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Campfire.PubSub},
       Campfire.Presence,
+      Campfire.AccountCache,
+      CampfireWeb.MessageBody.Cache,
       # Background jobs: webhook delivery and ban cleanup (AshOban triggers). After PubSub,
       # because jobs broadcast.
       {Oban,

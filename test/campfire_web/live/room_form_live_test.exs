@@ -21,7 +21,7 @@ defmodule CampfireWeb.RoomFormLiveTest do
       {:ok, view, html} = live(conn, ~p"/rooms/new/open")
       assert html =~ ~s(value="New room")
 
-      view |> form("#room-form", %{name: "Watercooler"}) |> render_submit()
+      view |> form("#room-form", room: %{name: "Watercooler"}) |> render_submit()
 
       [room] = Enum.filter(Chat.list_rooms!(actor: user), &(&1.name == "Watercooler"))
       assert room.kind == :open
@@ -32,11 +32,27 @@ defmodule CampfireWeb.RoomFormLiveTest do
     test "the Everyone switch links to the closed form, keeping the name", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/rooms/new/open")
 
-      view |> form("#room-form", %{name: "Secret plans"}) |> render_change()
+      view |> form("#room-form", room: %{name: "Secret plans"}) |> render_change()
       view |> element("#everyone-switch") |> render_click()
 
       assert_patch(view, ~p"/rooms/new/closed")
       assert has_element?(view, ~s(#room_name[value="Secret plans"]))
+    end
+
+    test "shows the name error from the domain and creates nothing", %{conn: conn, user: user} do
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/open")
+
+      html = view |> form("#room-form", room: %{name: ""}) |> render_change()
+      assert html =~ "can&#39;t be blank"
+      assert has_element?(view, "#room-form p.input-error")
+
+      view |> form("#room-form", room: %{name: "   "}) |> render_submit()
+      assert has_element?(view, "#room-form p.input-error", "can't be blank")
+      refute_redirected(view)
+      assert Enum.all?(Chat.list_rooms!(actor: user), &(&1.name != nil and &1.name != ""))
+
+      view |> form("#room-form", room: %{name: "Fixed"}) |> render_submit()
+      assert Enum.any?(Chat.list_rooms!(actor: user), &(&1.name == "Fixed"))
     end
 
     test "creates a closed room with the chosen members", %{
@@ -47,11 +63,17 @@ defmodule CampfireWeb.RoomFormLiveTest do
       third = user_fixture()
       {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
 
-      assert has_element?(view, ~s(input[type=hidden][name="user_ids[]"][value="#{user.id}"]))
+      assert has_element?(
+               view,
+               ~s(input[type=hidden][name="room[user_ids][]"][value="#{user.id}"])
+             )
+
       assert has_element?(view, "#user_#{other.id}")
 
       view
-      |> form("#room-form", %{name: "Secret", user_ids: [to_string(user.id), to_string(other.id)]})
+      |> form("#room-form",
+        room: %{name: "Secret", user_ids: [to_string(user.id), to_string(other.id)]}
+      )
       |> render_submit()
 
       [room] = Enum.filter(Chat.list_rooms!(actor: user), &(&1.name == "Secret"))
@@ -70,7 +92,7 @@ defmodule CampfireWeb.RoomFormLiveTest do
       assert has_element?(view, "#user_#{other.id}")
 
       view
-      |> form("#room-form", %{name: "Closed now", user_ids: [to_string(user.id)]})
+      |> form("#room-form", room: %{name: "Closed now", user_ids: [to_string(user.id)]})
       |> render_submit()
 
       assert_redirect(view, ~p"/rooms/#{room.id}")
@@ -97,7 +119,7 @@ defmodule CampfireWeb.RoomFormLiveTest do
       {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}/edit")
 
       assert has_element?(view, "#user_#{bot.id}[checked]")
-      view |> form("#room-form", %{name: "Still with bot"}) |> render_submit()
+      view |> form("#room-form", room: %{name: "Still with bot"}) |> render_submit()
 
       assert room_members(room, user) == Enum.sort([user.id, bot.id])
     end
@@ -113,7 +135,7 @@ defmodule CampfireWeb.RoomFormLiveTest do
       assert has_element?(view, "#user_#{other.id}[checked]")
       refute has_element?(view, "#user_#{bystander_banned.id}")
 
-      view |> form("#room-form", %{name: "Renamed"}) |> render_submit()
+      view |> form("#room-form", room: %{name: "Renamed"}) |> render_submit()
 
       assert reload(room).name == "Renamed"
       assert room_members(room, user) == Enum.sort([user.id, other.id])
@@ -148,7 +170,10 @@ defmodule CampfireWeb.RoomFormLiveTest do
       refute has_element?(view, "#room-form button[type=submit]")
       refute has_element?(view, "button[phx-click=delete]")
 
-      render_submit(view, "save", %{"name" => "Mine now"})
+      # A crafted submit is refused by the room's policy
+      assert render_submit(view, "save", %{"room" => %{"name" => "Mine now"}}) =~
+               "You can&#39;t do that."
+
       assert reload(room).name == "Theirs"
       assert room_members(room, user) != []
     end
@@ -174,8 +199,8 @@ defmodule CampfireWeb.RoomFormLiveTest do
       assert html =~ "Other Person"
 
       # Crafted form events are ignored
-      render_change(view, "change", %{"name" => "Renamed"})
-      render_submit(view, "save", %{"name" => "Renamed"})
+      render_change(view, "validate", %{"room" => %{"name" => "Renamed"}})
+      render_submit(view, "save", %{"room" => %{"name" => "Renamed"}})
       render_click(view, "toggle_kind", %{})
       assert render(view) =~ "Other Person"
 
@@ -188,6 +213,77 @@ defmodule CampfireWeb.RoomFormLiveTest do
     test "redirects non-members", %{conn: conn, other: other} do
       room = closed_room_fixture(other, [other])
       assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, ~p"/rooms/#{room.id}/edit")
+    end
+  end
+
+  describe "member filter" do
+    test "is shown only when there are more than 20 people", %{conn: conn, user: user} do
+      # The signed-in user and "Other Person" make 2; 18 more makes exactly 20
+      for _ <- 1..18, do: user_fixture()
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+      refute has_element?(view, "#member-filter")
+      assert has_element?(view, "#room-members[phx-hook=Filter]")
+
+      user_fixture(name: "Twenty First")
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+      assert has_element?(view, "input#member-filter[type=search][placeholder='Filter…']")
+
+      assert Enum.count(Campfire.Accounts.list_users!(actor: user)) == 21
+    end
+
+    test "rows carry the lowercased name to match and every checkbox stays in the form", %{
+      conn: conn,
+      user: user,
+      other: other
+    } do
+      for i <- 1..20, do: user_fixture(name: "Member #{i}")
+      {:ok, view, _html} = live(conn, ~p"/rooms/new/closed")
+
+      assert has_element?(view, "[data-filter-list] li[data-value='other person']")
+
+      # Everyone else has a switch (the creator is a locked hidden field), none removed by the filter
+      users = Campfire.Accounts.list_users!(actor: user)
+      assert length(users) == 22
+
+      for member <- users, member.id != user.id do
+        assert has_element?(view, "#user_#{member.id}[name='room[user_ids][]']")
+      end
+
+      assert has_element?(
+               view,
+               ~s(input[type=hidden][name="room[user_ids][]"][value="#{user.id}"])
+             )
+
+      # Saving still submits the checked members, whichever rows a filter would hide
+      third = Campfire.Accounts.list_users!(actor: user) |> Enum.find(&(&1.name == "Member 7"))
+
+      view
+      |> form("#room-form",
+        room: %{
+          name: "Filtered",
+          user_ids: Enum.map([user, other, third], &to_string(&1.id))
+        }
+      )
+      |> render_submit()
+
+      [room] = Enum.filter(Chat.list_rooms!(actor: user), &(&1.name == "Filtered"))
+      assert room_members(room, user) == Enum.sort([user.id, other.id, third.id])
+    end
+
+    test "also filters the member list when editing a closed room", %{
+      conn: conn,
+      user: user,
+      other: other
+    } do
+      others = for i <- 1..20, do: user_fixture(name: "Member #{i}")
+      room = closed_room_fixture(user, [user, other | Enum.take(others, 3)], "Secret")
+
+      {:ok, view, _html} = live(conn, ~p"/rooms/#{room.id}/edit")
+      assert has_element?(view, "#member-filter")
+
+      for member <- others ++ [other] do
+        assert has_element?(view, "#user_#{member.id}")
+      end
     end
   end
 end

@@ -5,6 +5,8 @@ defmodule CampfireWeb.AuthHTML do
   """
   use CampfireWeb, :html
 
+  import CampfireWeb.Translations, only: [translation_button: 1]
+
   alias CampfireWeb.Paths
 
   ## First run (GET /first_run)
@@ -68,28 +70,34 @@ defmodule CampfireWeb.AuthHTML do
             <fieldset class="flex flex-column gap center-block upad">
               <legend class="txt-large txt-align-center"><strong>{@account.name}</strong></legend>
 
-              <.input
-                field={@form[:email_address]}
-                type="email"
-                icon="email"
-                label="Email address"
-                class="txt-large"
-                placeholder="Enter your email address"
-                autocomplete="username"
-                autofocus
-                required
-              />
-              <.input
-                field={@form[:password]}
-                type="password"
-                icon="password"
-                label="Password"
-                class="txt-large"
-                placeholder="Enter your password"
-                autocomplete="current-password"
-                maxlength="72"
-                required
-              />
+              <div class="flex align-center gap">
+                <.translation_button key={:email_address} />
+                <.input
+                  field={@form[:email_address]}
+                  type="email"
+                  icon="email"
+                  label="Email address"
+                  class="txt-large"
+                  placeholder="Enter your email address"
+                  autocomplete="username"
+                  autofocus
+                  required
+                />
+              </div>
+              <div class="flex align-center gap">
+                <.translation_button key={:password} />
+                <.input
+                  field={@form[:password]}
+                  type="password"
+                  icon="password"
+                  label="Password"
+                  class="txt-large"
+                  placeholder="Enter your password"
+                  autocomplete="current-password"
+                  maxlength="72"
+                  required
+                />
+              </div>
 
               <.icon_button
                 icon="arrow-right"
@@ -165,38 +173,47 @@ defmodule CampfireWeb.AuthHTML do
           </label>
         </fieldset>
 
-        <.input
-          field={@form[:name]}
-          icon="person"
-          label="Name"
-          class="txt-large"
-          placeholder="Name"
-          autocomplete="name"
-          autofocus
-          required
-        />
-        <.input
-          field={@form[:email_address]}
-          type="email"
-          icon="email"
-          label="Email address"
-          class="txt-large"
-          placeholder="Email address"
-          autocomplete="username"
-          required
-        />
-        <.input
-          field={@form[:password]}
-          type="password"
-          icon="password"
-          label="Password"
-          class="txt-large"
-          placeholder="Password"
-          autocomplete="new-password"
-          maxlength="72"
-          value=""
-          required
-        />
+        <div class="flex align-center gap">
+          <.translation_button key={:user_name} />
+          <.input
+            field={@form[:name]}
+            icon="person"
+            label="Name"
+            class="txt-large flex-item-grow"
+            placeholder="Name"
+            autocomplete="name"
+            autofocus
+            required
+          />
+        </div>
+        <div class="flex align-center gap">
+          <.translation_button key={:email_address} />
+          <.input
+            field={@form[:email_address]}
+            type="email"
+            icon="email"
+            label="Email address"
+            class="txt-large flex-item-grow"
+            placeholder="Email address"
+            autocomplete="username"
+            required
+          />
+        </div>
+        <div class="flex align-center gap">
+          <.translation_button key={:password} />
+          <.input
+            field={@form[:password]}
+            type="password"
+            icon="password"
+            label="Password"
+            class="txt-large flex-item-grow"
+            placeholder="Password"
+            autocomplete="new-password"
+            maxlength="72"
+            value=""
+            required
+          />
+        </div>
 
         <.icon_button
           icon={@submit_icon}

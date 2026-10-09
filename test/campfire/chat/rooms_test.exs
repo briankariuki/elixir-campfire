@@ -214,6 +214,29 @@ defmodule Campfire.Chat.RoomsTest do
       refute room.id in Enum.map(Chat.list_rooms!(actor: outsider), & &1.id)
     end
 
+    test "oldest_room returns the actor's oldest accessible room" do
+      creator = user_fixture()
+      member = user_fixture()
+      outsider = user_fixture()
+
+      # The oldest room is closed and the member isn't in it; names sort the other way round.
+      _hidden = closed_room_fixture(creator, [creator, outsider], "Aardvark")
+      oldest = closed_room_fixture(creator, [creator, member], "Zulu")
+      _newer = closed_room_fixture(creator, [creator, member], "Alpha")
+
+      assert %{id: id} = Chat.oldest_room!(actor: member)
+      assert id == oldest.id
+      assert Chat.oldest_room!(actor: creator).name == "Aardvark"
+    end
+
+    test "oldest_room is nil when the actor has no rooms" do
+      creator = user_fixture()
+      outsider = user_fixture()
+      _room = closed_room_fixture(creator, [creator], "Private")
+
+      assert {:ok, nil} = Chat.oldest_room(actor: outsider)
+    end
+
     test "members can load the room's users" do
       creator = user_fixture()
       member = user_fixture()

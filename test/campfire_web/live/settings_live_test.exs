@@ -195,6 +195,8 @@ defmodule CampfireWeb.SettingsLiveTest do
 
       assert render_click(view, "toggle_restrict", %{}) =~ "allowed"
       assert render_click(view, "regenerate_join_code", %{}) =~ "allowed"
+
+      assert render_submit(view, "save_name", %{"account" => %{"name" => "Mine"}}) =~ "allowed"
       render_click(view, "toggle_role", %{"id" => to_string(other.id)})
       render_click(view, "remove_user", %{"id" => to_string(other.id)})
 
@@ -233,6 +235,21 @@ defmodule CampfireWeb.SettingsLiveTest do
       view |> element("#remove-user-#{other.id}") |> render_click()
       assert reload(other).status == :deactivated
       refute has_element?(view, "#account-user-#{other.id}")
+    end
+
+    test "the account name form shows the domain's errors", %{conn: conn} do
+      admin = admin_fixture()
+      {:ok, view, _html} = conn |> log_in_user(admin) |> live(~p"/account")
+
+      view |> form("#account-name-form", account: %{name: ""}) |> render_change()
+      assert has_element?(view, "#account-name-form p.input-error")
+
+      view |> form("#account-name-form", account: %{name: ""}) |> render_submit()
+      assert account_fixture().name != ""
+
+      view |> form("#account-name-form", account: %{name: "Basecamp"}) |> render_submit()
+      refute has_element?(view, "#account-name-form p.input-error")
+      assert account_fixture().name == "Basecamp"
     end
 
     test "admins see banned users", %{conn: conn} do

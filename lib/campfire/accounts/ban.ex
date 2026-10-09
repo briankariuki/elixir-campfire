@@ -21,6 +21,8 @@ defmodule Campfire.Accounts.Ban do
 
     custom_indexes do
       index [:ip_address]
+      # Looked up by user on unban; Postgres doesn't index foreign keys on its own.
+      index [:user_id]
     end
   end
 

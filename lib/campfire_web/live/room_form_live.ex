@@ -12,9 +12,13 @@ defmodule CampfireWeb.RoomFormLive do
 
   alias Campfire.{Accounts, Chat}
   alias Campfire.Accounts.User
-  alias CampfireWeb.{Paths, Sidebar}
+  alias Campfire.Chat.Room
+  alias CampfireWeb.{ErrorMessages, Paths, Sidebar}
 
   on_mount Sidebar
+
+  # The member list gets a filter input when there are more people than this (like the original)
+  @filter_threshold 20
 
   @impl true
   def mount(params, _session, socket) do
@@ -32,7 +36,7 @@ defmodule CampfireWeb.RoomFormLive do
     assign(socket,
       page_title: "New chat room",
       room: nil,
-      name: "New room",
+      form: nil,
       can_administer?: true,
       users: list_users(user, MapSet.new()),
       selected: MapSet.new([user.id]),
@@ -56,16 +60,16 @@ defmodule CampfireWeb.RoomFormLive do
         members = MapSet.new(room.users, & &1.id)
 
         {:ok,
-         assign(socket,
+         socket
+         |> assign(
            page_title: "Edit settings for #{room.name}",
            room: room,
-           kind: room.kind,
-           name: room.name,
            can_administer?: User.can_administer?(user, room),
            users: list_users(user, members),
            selected: members,
            initially_selected: members
-         )}
+         )
+         |> assign_form(room.kind)}
 
       {:error, _} ->
         {:ok,
@@ -87,23 +91,24 @@ defmodule CampfireWeb.RoomFormLive do
   @impl true
   def handle_params(_params, _uri, socket) do
     case socket.assigns.live_action do
-      :new_open -> {:noreply, assign(socket, kind: :open)}
-      :new_closed -> {:noreply, assign(socket, kind: :closed)}
+      :new_open -> {:noreply, assign_form(socket, :open)}
+      :new_closed -> {:noreply, assign_form(socket, :closed)}
       :edit -> {:noreply, socket}
     end
   end
 
   @impl true
   def handle_event(event, _params, %{assigns: %{kind: :direct}} = socket)
-      when event in ["change", "toggle_kind", "save"],
+      when event in ["validate", "toggle_kind", "save"],
       do: {:noreply, socket}
 
-  def handle_event("change", params, socket) do
-    socket = assign(socket, name: Map.get(params, "name", socket.assigns.name))
+  def handle_event("validate", %{"room" => params} = event, socket) do
+    form = AshPhoenix.Form.validate(socket.assigns.form, params, target: event["_target"] || [])
+    socket = assign(socket, form: form)
 
     # Only member switches change the selection (not the name or the Everyone switch)
     if socket.assigns.kind == :closed and
-         (params["_target"] == ["user_ids"] or Map.has_key?(params, "user_ids")) do
+         (event["_target"] == ["room", "user_ids"] or Map.has_key?(params, "user_ids")) do
       {:noreply, assign(socket, selected: selected_ids(params))}
     else
       {:noreply, socket}
@@ -112,22 +117,20 @@ defmodule CampfireWeb.RoomFormLive do
 
   def handle_event("toggle_kind", _params, %{assigns: %{can_administer?: true}} = socket) do
     kind = if socket.assigns.kind == :open, do: :closed, else: :open
-    {:noreply, assign(socket, kind: kind)}
+    {:noreply, assign_form(socket, kind)}
   end
 
-  def handle_event("save", params, socket) do
-    socket = assign(socket, name: Map.get(params, "name", socket.assigns.name))
-    ids = if socket.assigns.kind == :closed, do: selected_ids(params), else: []
-
-    case save(socket, String.trim(socket.assigns.name), ids) do
+  def handle_event("save", %{"room" => params}, socket) do
+    case AshPhoenix.Form.submit(socket.assigns.form, params: params) do
       {:ok, room} ->
         {:noreply, push_navigate(socket, to: ~p"/rooms/#{room.id}")}
 
-      {:error, %Ash.Error.Forbidden{}} ->
-        {:noreply, put_flash(socket, :error, "You can't do that.")}
+      {:error, form} ->
+        socket = assign(socket, form: form)
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Please give the room a name.")}
+        if ErrorMessages.forbidden?(form),
+          do: {:noreply, put_flash(socket, :error, "You can't do that.")},
+          else: {:noreply, socket}
     end
   end
 
@@ -141,17 +144,37 @@ defmodule CampfireWeb.RoomFormLive do
     end
   end
 
-  defp save(%{assigns: %{room: nil, kind: :open, current_user: user}}, name, _ids),
-    do: Chat.create_open_room(name, actor: user)
+  # (Re)builds the form for `kind`, which picks the create/update action. Switching kind keeps the
+  # name typed so far.
+  defp assign_form(socket, kind) do
+    %{room: room, current_user: user} = socket.assigns
 
-  defp save(%{assigns: %{room: nil, kind: :closed, current_user: user}}, name, ids),
-    do: Chat.create_closed_room(name, ids, actor: user)
+    opts = [
+      params: %{"name" => typed_name(socket.assigns[:form], room)},
+      actor: user,
+      as: "room",
+      # A forbidden submit is reported with a flash, not as a field error
+      warn_on_unhandled_errors?: false
+    ]
 
-  defp save(%{assigns: %{room: room, kind: :open, current_user: user}}, name, _ids),
-    do: Chat.update_open_room(room, %{name: name}, actor: user)
+    form =
+      case room do
+        nil -> AshPhoenix.Form.for_create(Room, create_action(kind), opts)
+        room -> AshPhoenix.Form.for_update(room, update_action(kind), opts)
+      end
 
-  defp save(%{assigns: %{room: room, kind: :closed, current_user: user}}, name, ids),
-    do: Chat.update_closed_room(room, %{name: name, user_ids: ids}, actor: user)
+    assign(socket, kind: kind, form: to_form(form))
+  end
+
+  defp create_action(:open), do: :create_open
+  defp create_action(:closed), do: :create_closed
+
+  defp update_action(:open), do: :update_open
+  defp update_action(:closed), do: :update_closed
+
+  defp typed_name(nil, nil), do: "New room"
+  defp typed_name(nil, room), do: room.name
+  defp typed_name(form, _room), do: AshPhoenix.Form.value(form, :name)
 
   defp selected_ids(params) do
     params
@@ -200,19 +223,21 @@ defmodule CampfireWeb.RoomFormLive do
     {selected, unselected} =
       Enum.split_with(assigns.users, &(&1.id in assigns.initially_selected))
 
-    assigns = assign(assigns, selected_users: selected, unselected_users: unselected)
+    assigns =
+      assign(assigns,
+        selected_users: selected,
+        unselected_users: unselected,
+        filter_threshold: @filter_threshold
+      )
 
     ~H"""
     <section class="panel txt-align-center center margin-block-double">
-      <form id="room-form" phx-change="change" phx-submit="save">
+      <.form for={@form} id="room-form" phx-change="validate" phx-submit="save">
         <div class="flex align-center gap">
           <label :if={@can_administer?} class="flex-item-grow txt-large">
-            <input
-              type="text"
-              name="name"
-              id="room_name"
-              value={@name}
-              class="input full-width"
+            <.input
+              field={@form[:name]}
+              class="full-width"
               placeholder="Name the room"
               autocomplete="off"
               required
@@ -220,13 +245,17 @@ defmodule CampfireWeb.RoomFormLive do
             />
             <span class="for-screen-reader">Name this room</span>
           </label>
-          <h1 :if={!@can_administer?} class="flex-item-grow txt-x-large">{@name}</h1>
+          <h1 :if={!@can_administer?} class="flex-item-grow txt-x-large">{@room.name}</h1>
         </div>
 
         <hr class="margin-block borderless" />
 
         <section class="room-access margin-block pad-inline fill-shade border-radius">
-          <menu class="flex flex-column gap margin-none pad overflow-y constrain-height">
+          <menu
+            id="room-members"
+            class="flex flex-column gap margin-none pad overflow-y constrain-height"
+            phx-hook="Filter"
+          >
             <li :if={@can_administer?} class="flex align-center gap margin-none">
               <figure
                 class="avatar flex-item-no-shrink"
@@ -249,35 +278,50 @@ defmodule CampfireWeb.RoomFormLive do
 
             <hr :if={@can_administer?} class="separator full-width" style="--border-style: solid" />
 
-            <%= if @kind == :open do %>
-              <.member :for={user <- @users} user={user}>
-                <img
-                  :if={@can_administer?}
-                  src={~p"/images/check.svg"}
-                  width="20"
-                  height="20"
-                  class="colorize--black flex-item-no-shrink"
-                  aria-hidden="true"
+            <%!-- Shown like the original, only for long lists. The Filter hook only hides rows (it never
+                 removes them), so every checkbox is still submitted. --%>
+            <input
+              :if={length(@users) > @filter_threshold}
+              type="search"
+              id="member-filter"
+              class="input input--transparent full-width"
+              placeholder="Filter…"
+              autocomplete="off"
+              autocorrect="off"
+              data-1p-ignore="true"
+            />
+
+            <div data-filter-list contents>
+              <%= if @kind == :open do %>
+                <.member :for={user <- @users} user={user}>
+                  <img
+                    :if={@can_administer?}
+                    src={~p"/images/check.svg"}
+                    width="20"
+                    height="20"
+                    class="colorize--black flex-item-no-shrink"
+                    aria-hidden="true"
+                  />
+                </.member>
+              <% else %>
+                <.member :for={user <- @selected_users} user={user}>
+                  <.member_switch
+                    :if={@can_administer?}
+                    user={user}
+                    checked={user.id in @selected}
+                    locked={is_nil(@room) and user.id == @current_user.id}
+                  />
+                </.member>
+                <hr
+                  :if={@selected_users != [] and @unselected_users != []}
+                  class="separator full-width"
+                  style="--border-style: solid"
                 />
-              </.member>
-            <% else %>
-              <.member :for={user <- @selected_users} user={user}>
-                <.member_switch
-                  :if={@can_administer?}
-                  user={user}
-                  checked={user.id in @selected}
-                  locked={is_nil(@room) and user.id == @current_user.id}
-                />
-              </.member>
-              <hr
-                :if={@selected_users != [] and @unselected_users != []}
-                class="separator full-width"
-                style="--border-style: solid"
-              />
-              <.member :for={user <- @unselected_users} user={user}>
-                <.member_switch :if={@can_administer?} user={user} checked={user.id in @selected} />
-              </.member>
-            <% end %>
+                <.member :for={user <- @unselected_users} user={user}>
+                  <.member_switch :if={@can_administer?} user={user} checked={user.id in @selected} />
+                </.member>
+              <% end %>
+            </div>
           </menu>
         </section>
 
@@ -285,7 +329,7 @@ defmodule CampfireWeb.RoomFormLive do
           <img src={~p"/images/check.svg"} width="20" height="20" aria-hidden="true" />
           <span class="for-screen-reader">Save</span>
         </button>
-      </form>
+      </.form>
     </section>
 
     <section :if={@room && @can_administer?} class="panel txt-align-center center margin-block">
@@ -369,7 +413,7 @@ defmodule CampfireWeb.RoomFormLive do
 
   defp member_switch(%{locked: true} = assigns) do
     ~H"""
-    <input type="hidden" name="user_ids[]" value={@user.id} />
+    <input type="hidden" name="room[user_ids][]" value={@user.id} />
     <img
       src={~p"/images/check.svg"}
       width="20"
@@ -385,7 +429,7 @@ defmodule CampfireWeb.RoomFormLive do
     <label class="switch flex-item-no-shrink">
       <input
         type="checkbox"
-        name="user_ids[]"
+        name="room[user_ids][]"
         value={@user.id}
         checked={@checked}
         class="switch__input"

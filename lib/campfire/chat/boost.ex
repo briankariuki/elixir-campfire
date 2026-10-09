@@ -23,6 +23,8 @@ defmodule Campfire.Chat.Boost do
 
     custom_indexes do
       index [:message_id]
+      # Destroying a room cascades to its boosts
+      index [:room_id]
     end
   end
 

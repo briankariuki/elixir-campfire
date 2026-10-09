@@ -172,6 +172,13 @@ built in: a `read :page` with `pagination keyset?: true, default_limit: 40` and 
 gives `before`/`after` cursors for free. The `around` mode would stay custom. Low priority (the current code is tested
 and fine); listed so nobody re-implements it.
 
+**Status: done.** `Message` has `read :in_room` (keyset pagination, sorted by `(inserted_at, id)`) and
+`read :latest_in_room` (newest 40, descending). `Campfire.Chat.Pagination` keeps the `:page` generic action and its
+results, but a cursor id is now read through `:in_room` to get its `:keyset` metadata and the page is
+`page: [before | after: keyset, limit: 40]`; `around` is before + message + after. Ash keyset has no "last page", so
+the default page is the descending read reversed. A cursor message that is gone still pages by id. No hand-written
+`(inserted_at, id)` filters remain.
+
 ### 1.10 Domain-level plain functions (L)
 
 `Accounts.first_run/1`, `set_up?/0`, `valid_join_code?/1`, `get_session_by_token/1`, `touch_session/2`,
@@ -233,7 +240,7 @@ agent per phase.
 **Phase 4 — Optional plugins** (section 4): AshAuthentication for sessions/bot API keys, AshOban for webhooks and ban
 cleanup, AshRateLimiter for login. Each is a separate decision.
 
-Not planned: AshJsonApi for the bot API (would change a public contract), keyset pagination rewrite (1.9).
+Not planned: AshJsonApi for the bot API (would change a public contract).
 
 ---
 

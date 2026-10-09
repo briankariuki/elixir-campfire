@@ -12,7 +12,9 @@ config :ash_oban, pro?: false
 config :campfire, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [default: 10, webhooks: 10],
+  # embeds: link previews fetch other sites, so they get their own lane and can't hold up
+  # webhooks or ban cleanup (and vice versa)
+  queues: [default: 10, webhooks: 10, embeds: 5],
   lifeline: [rescue_after: {2, :hours}],
   pruner: [max_age: {1, :day}],
   repo: Campfire.Repo,
@@ -80,8 +82,15 @@ config :campfire,
 # Where uploaded files (avatars, logos, attachments) are stored on disk.
 config :campfire, :uploads_dir, Path.expand("../priv/uploads", __DIR__)
 
+# Renders a message's body as HTML for webhook payloads (same as the bot API). Wired here so the
+# domain (Campfire.Webhooks) doesn't depend on the web layer.
+config :campfire, :message_html, {CampfireWeb.MessageBody, :to_html_string}
+
 # Extra Req options for webhook deliveries (tests plug in Req.Test here).
 config :campfire, :webhook_req_options, []
+
+# Extra Req options for link preview fetches (tests plug in Req.Test here).
+config :campfire, :opengraph_req_options, []
 
 # Configure the endpoint
 config :campfire, CampfireWeb.Endpoint,
