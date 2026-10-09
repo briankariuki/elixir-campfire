@@ -135,7 +135,10 @@ defmodule CampfireWeb.BrowserGateTest do
 
       assert html =~ "17.2+"
       assert html =~ "121+"
-      refute html =~ "Ie"
+
+      refute doc |> LazyHTML.query("#incompatible-browser .browser-list") |> LazyHTML.text() =~
+               "Ie"
+
       # the sign-in form is not served
       assert doc
              |> LazyHTML.query("input[name='user[password]'], input[type=password]")
