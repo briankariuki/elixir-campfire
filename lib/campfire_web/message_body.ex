@@ -147,6 +147,14 @@ defmodule CampfireWeb.MessageBody do
 
   defp safe_binary({:safe, iodata}), do: IO.iodata_to_binary(iodata)
 
+  @doc """
+  What `cached_html/3` depends on besides the message version: the body and the markup of the
+  mentioned users resolved from `users`. A cache that holds renders of whole messages
+  (`CampfireWeb.MessageComponents.cached_message/1`) puts it in its key.
+  """
+  def mention_digest(%{body: body} = message, users),
+    do: digest(body, mentioned_users(message, users))
+
   # What the output depends on besides the message version: the body and the mention markup
   defp digest(body, mentioned) do
     users = Enum.map(mentioned, &{&1.id, &1.name, &1.avatar_key})

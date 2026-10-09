@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""Summarize a bench/run results dir: median [min-max] across reps, in the format and units of
+basecamp/once-campfire-elixir bench/report (MIT).
+
+  bench/report DIR
+  bench/report DIR --with-upstream [PATH]      # add upstream's published Rails/Elixir/Go/Rust medians
+
+PATH defaults to bench/results/upstream-20261004 (a copy of upstream's results/ruby-elixir-go-rust-20261004).
+Ratios are "advantage" ratios like upstream's: > 1 means this port is better (higher throughput, or lower
+latency/memory/time), computed from the medians.
+
+With --with-upstream every row carries a comparability mark, explained under the tables:
+  = same workload      ~ similar workload, differently implemented      x not comparable
+"""
+import argparse, glob, json, os, statistics, sys
+
+BENCH = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_UPSTREAM = os.path.join(BENCH, "results", "upstream-20261004")
+UPSTREAM_NAMES = {"reference": "Rails (upstream)", "elixir": "Elixir (upstream)", "go": "Go (upstream)", "rust": "Rust (upstream)"}
+UPSTREAM_ORDER = ["reference", "elixir", "go", "rust"]
+
+
+def load_runs(path, assert_valid=True):
+    if os.path.exists(os.path.join(path, "INCOMPLETE.md")):
+        raise SystemExit(f"{path}: incomplete diagnostic run: refusing to publish a report")
+    runs = {}
+    for f in sorted(glob.glob(os.path.join(path, "*-*.json"))):
+        r = json.load(open(f))
+        if not isinstance(r, dict) or "app" not in r:
+            continue
+        if assert_valid:
+            for h in r.get("http", []):
+                expected = {"201"} if h["route"] == "post_message" and "201" in h["statuses"] else {"200"}
+                assert h["errors"] == 0 and h.get("invalid_responses", 0) == 0 and set(h["statuses"]) == expected, (f, h["route"])
+            for c in fanout_list(r) + r.get("distinct", []):
+                assert c["ready"] == c["clients"] and c["failed"] == 0 and c["latency"]["complete"] == c["latency"]["messages"] \
+                    and c["throughput"]["complete"] == c["throughput"]["posted"], f
+        runs.setdefault(r["app"], []).append(r)
+    return runs
+
+
+def fanout_list(r):
+    return r.get("liveview") or r.get("cable") or []
+
+
+def cell(vals):
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None, "–"
+    m = statistics.median(vals)
+    fmt = (lambda v: f"{v:,.0f}") if m >= 100 else (lambda v: f"{v:.1f}") if m >= 10 else (lambda v: f"{v:.2f}")
+    spread = f" [{fmt(min(vals))}–{fmt(max(vals))}]" if len(vals) > 1 else ""
+    return m, fmt(m) + spread
+
+
+class Table:
+    def __init__(self, columns, ratios, notes):
+        """columns: [(key, title)]; ratios: [(numerator key, denominator key, title)]; notes: show the mark column."""
+        self.columns, self.ratios, self.notes = columns, ratios, notes
+        self.runs = {}
+
+    def header(self, title, note=""):
+        print(f"\n### {title}\n")
+        if note:
+            print(note + "\n")
+        cols = [t for _, t in self.columns] + [t for _, _, t in self.ratios] + (["Like-for-like"] if self.notes else [])
+        print("| Metric | " + " | ".join(cols) + " |")
+        print("|---|" + "---|" * len(cols))
+
+    def row(self, name, getter, higher_better, mark="="):
+        meds, cells = {}, []
+        for key, _ in self.columns:
+            vals = []
+            for r in self.runs.get(key, []):
+                try:
+                    vals.append(getter(r))
+                except (KeyError, IndexError, TypeError, StopIteration, ValueError):
+                    vals.append(None)
+            m, c = cell(vals)
+            meds[key] = m
+            cells.append(c)
+        ratios = []
+        for num, den, _ in self.ratios:
+            if meds.get(num) and meds.get(den):
+                x = meds[num] / meds[den] if higher_better else meds[den] / meds[num]
+                ratios.append(f"{x:.1f}×")
+            else:
+                ratios.append("–")
+        print(f"| {name} | " + " | ".join(cells + ratios + ([mark] if self.notes else [])) + " |")
+
+
+# --- role mapping for the per-process memory table ----------------------------------------------------
+
+def app_role(app):
+    return {"rust": "campfire", "go": "campfire", "elixir": "beam", "reference": "puma"}.get(app, "beam")
+
+
+def serving_roles(app):
+    if app in ("rust", "go"):
+        return ["campfire"]
+    if app == "elixir":
+        return ["beam", "redis", "helpers", "thrust"]
+    if app == "reference":
+        return ["puma", "redis", "thrust"]
+    return ["beam", "postgres"]            # this port: the VM and Postgres take part in every delivery
+
+
+def procmem(n, phase, what, key="liveview"):
+    def get(r):
+        lst = (r.get("distinct") if key == "distinct" else fanout_list(r))
+        c = next(c for c in lst if c["clients"] == n)
+        p = c["process_memory"][phase]
+        roles = p["roles"]
+        if what == "app":
+            return roles[app_role(r["app"])]["peak_pss_mb"]
+        if what == "app_anon":
+            return roles[app_role(r["app"])]["peak_anon_mb"]
+        if what == "serving":
+            return sum(roles[k]["peak_pss_mb"] for k in serving_roles(r["app"]) if k in roles)
+        return p["peak_total_pss_mb"]
+    return get
+
+
+# --- comparability notes (--with-upstream) ------------------------------------------------------------------
+
+MARKS = {
+    "startup": "~",       # one container incl. its datastore (upstream) vs app container + an already-running Postgres container
+    "memory": "~",
+    "room_show": "~", "messages_page": "x", "search": "~", "avatar": "=", "static_css": "=", "up": "=", "post_message": "x",
+    "fanout": "x", "upload": "~",
+}
+
+NOTES = """
+### Comparability notes
+
+Everything under "upstream" is copied unchanged from upstream's published `results/ruby-elixir-go-rust-20261004`
+(see `bench/results/upstream-20261004/ATTRIBUTION.md`); only the "this port" column was measured here.
+
+- **Hardware and platform differ.** Upstream ran on an AMD Ryzen AI Max+ 395 (32 threads, 30 GB, Linux 7.2, server CPUs 8-11 and
+  load generator CPUs 12-15). This port ran in an OrbStack Linux VM on an Apple M2 Pro (see the env block): the VM's vCPUs are scheduled by
+  macOS onto performance and efficiency cores, so "4 pinned vCPUs" is not 4 pinned cores. Treat ratios against upstream as indicative
+  (order of magnitude), not as a verdict; the throughput, latency and CPU rows depend on core speed directly.
+- **The datastore is a separate process.** Upstream's apps use SQLite (and Redis for the Elixir port and Rails) inside the single pinned
+  container. Here Postgres runs in its own container, pinned to the same 4 vCPUs as the app and reached over loopback TCP. Memory and
+  `CPU µs/success` for this port are the sum over both containers (the Postgres share is reported separately below), so they are
+  comparable in scope to upstream's whole-container numbers, but include Postgres's page cache in `memory.current`.
+- **No front proxy.** Upstream's Rails/Elixir ports are measured through Thruster (gzip, static caching); here the release's own server
+  answers directly (it gzips dynamic responses itself; `caddy` from `docker-compose.yml` is not in the path). Loopback only: no TLS or NIC cost.
+- **`room_show` (~)**: `GET /rooms/<id>` is the same page content (same seed, same busy room), but a LiveView dead render of a different
+  HTML shape and size (see the preflight sizes in `*-validation.json` against upstream's); throughput follows payload size.
+- **`messages_page` (x)**: upstream fetches an HTML page of older messages. This app has no such endpoint (LiveView pages through the
+  socket), so the closest equivalent is the bot API `GET /rooms/<id>/<bot_key>/messages?before=<id>` (JSON, 40 messages, no session).
+- **`sidebar`**: skipped, there is no HTTP endpoint (LiveView renders the sidebar); upstream's rows show "–" for this port.
+- **`search` (~)**: `GET /searches?q=coffee` renders a LiveView dead render; same query and seed.
+- **`avatar`, `static_css`, `up` (=)**: same request, different servers. `avatar` here is the seed user's uploaded JPEG; `static_css` the digested `app.css`.
+- **`post_message` (x)**: upstream posts through the signed-in form with CSRF and Turbo; this port's load generator posts through the bot API
+  (`POST /rooms/<id>/<bot_key>/messages`, 201), which skips session and CSRF handling.
+- **Fan-out (x)**: upstream subscribes clients over Action Cable; this port connects LiveView sockets (Phoenix channel protocol, per-process
+  rendering of diffs), so "clients" are not the same kind of object. Posters use the bot API instead of the form POST. As upstream,
+  one authenticated user holds many connections: not a distinct-user capacity claim (the distinct-users variant, when run, is separate).
+- **`upload` (~)**: bot API multipart `attachment` POST instead of the form POST; the same 505 KB `black_hole.jpg`; the thumbnail check follows this
+  app's attachment URL.
+- **Process memory**: this port's "app process" is the BEAM; "serving processes" and "whole container" add Postgres.
+"""
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("dir")
+    ap.add_argument("--with-upstream", nargs="?", const=DEFAULT_UPSTREAM, metavar="PATH")
+    a = ap.parse_args()
+
+    ours = load_runs(a.dir)
+    if not ours:
+        sys.exit(f"{a.dir}: no run results (<app>-<rep>.json)")
+    our_apps = list(ours)
+    up = load_runs(a.with_upstream, assert_valid=False) if a.with_upstream else {}
+    up_apps = [k for k in UPSTREAM_ORDER if k in up]
+
+    columns = [(f"ours:{k}", f"{k} (this port)" if up else k) for k in our_apps] + [(f"up:{k}", UPSTREAM_NAMES[k]) for k in up_apps]
+    t = Table(columns, [], bool(up))
+    for k in our_apps:
+        t.runs[f"ours:{k}"] = ours[k]
+    for k in up_apps:
+        t.runs[f"up:{k}"] = up[k]
+    first_ours = f"ours:{our_apps[0]}"
+    if up:
+        t.ratios = [(first_ours, f"up:{k}", f"vs {UPSTREAM_NAMES[k]}") for k in ("reference", "elixir") if k in up]
+    elif len(our_apps) > 1:
+        t.ratios = [(f"ours:{our_apps[-1]}", first_ours, f"{our_apps[-1]} vs {our_apps[0]}")]
+    # rows read each run's own record; the upstream records have the same shape except `liveview`/`cable`.
+
+    env = os.path.join(a.dir, "env.txt")
+    if os.path.exists(env):
+        print("```\n" + open(env).read().strip() + "\n```")
+    reps = ", ".join(f"{k} {len(ours[k])}" for k in our_apps) + "".join(f", upstream {k} {len(up[k])}" for k in up_apps)
+    print(f"\nReps: {reps}. Cells: median [min–max]." + (" Ratios: this port's advantage (> 1 better)." if t.ratios else ""))
+
+    t.header("Startup and memory", "Memory is the sum of the app and Postgres containers for this port (per-container splits are in the raw JSON).")
+    t.row("cold start: docker run → /up 200 (ms)", lambda r: r["cold_start_ms"], False, MARKS["startup"])
+    t.row("idle memory.current (MiB)", lambda r: r["memory"]["idle_current_mb"], False, MARKS["memory"])
+    t.row("idle anon (MiB)", lambda r: r["memory"]["idle_anon_mb"], False, MARKS["memory"])
+    t.row("peak memory.current under load (MiB)", lambda r: r["memory"]["peak_current_mb"], False, MARKS["memory"])
+    t.row("peak anon under load (MiB)", lambda r: r["memory"]["peak_anon_mb"], False, MARKS["memory"])
+
+    routes = []
+    for k in list(ours) + list(up):
+        for r in (ours.get(k) or up.get(k))[:1]:
+            for h in r["http"]:
+                if (h["route"], h["conc"]) not in routes:
+                    routes.append((h["route"], h["conc"]))
+    order = ["room_show", "messages_page", "sidebar", "search", "avatar", "static_css", "up", "post_message"]
+    routes.sort(key=lambda rc: (order.index(rc[0]) if rc[0] in order else 99, rc[1]))
+
+    def http(route, conc, key):
+        def get(r):
+            h = next(h for h in r["http"] if h["route"] == route and h["conc"] == conc)
+            if h["latency"].get("n", 0) == 0 or h["ok"] == 0:
+                return None
+            return h[key] if key in ("rps", "cpu_us_per_success") else h["latency"][key]
+        return get
+
+    t.header("HTTP (signed in; keep-alive; c = concurrent connections)",
+             "Signed in as David for session routes; `messages_page` and `post_message` use the bot API (no session)." if True else "")
+    for route, conc in routes:
+        mark = ("x" if route == "sidebar" else MARKS.get(route, "~"))
+        t.row(f"{route} c={conc} req/s", http(route, conc, "rps"), True, mark)
+        t.row(f"{route} c={conc} p50 ms", http(route, conc, "p50_ms"), False, mark)
+        t.row(f"{route} c={conc} p99 ms", http(route, conc, "p99_ms"), False, mark)
+        t.row(f"{route} c={conc} CPU µs/success", http(route, conc, "cpu_us_per_success"), False, mark)
+
+    print("\n### HTTP errors / non-2xx-3xx (first rep, per app)\n")
+    for k in our_apps:
+        bad = [f"{h['route']} c={h['conc']}: {h['statuses']} errors={h['errors']}" for h in ours[k][0]["http"]
+               if h["errors"] or any(int(s) >= 400 for s in h["statuses"])]
+        print(f"- {k}: " + ("; ".join(bad) if bad else "none"))
+    skipped = {}
+    for k in our_apps:
+        skipped.update(ours[k][0].get("skipped_workloads", {}))
+    for name, why in skipped.items():
+        print(f"- skipped workload `{name}`: {why}")
+
+    def fanout(title, key, upstream, tbl=None):
+        tbl = tbl or t
+        lst = None
+        for k in our_apps:
+            lst = lst or (ours[k][0].get("distinct") if key == "distinct" else fanout_list(ours[k][0]))
+        if not lst:
+            return
+        tbl.header(title)
+        for c in lst:
+            n = c["clients"]
+            g = (lambda f, n=n: (lambda r: f(next(c for c in (r["distinct"] if key == "distinct" else fanout_list(r)) if c["clients"] == n))))
+            m = "x" if upstream else "x"
+            tbl.row(f"{n} clients: subscribed", g(lambda c: c["ready"]), True, m)
+            tbl.row(f"{n} clients: connect+subscribe all (s)", g(lambda c: c["connect_secs"]), False, m)
+            tbl.row(f"{n} clients: paced post→one client p50 ms", g(lambda c: c["latency"]["per_client"]["p50_ms"]), False, m)
+            tbl.row(f"{n} clients: paced post→all clients p50 ms", g(lambda c: c["latency"]["all_clients"]["p50_ms"]), False, m)
+            tbl.row(f"{n} clients: paced post→all clients p99 ms", g(lambda c: c["latency"]["all_clients"]["p99_ms"]), False, m)
+            tbl.row(f"{n} clients: max sustained msgs/s (delivered to all)", g(lambda c: c["throughput"]["delivered_msgs_per_sec"]), True, m)
+            tbl.row(f"{n} clients: deliveries/s (client×message)", g(lambda c: c["throughput"]["frames_per_sec"]), True, m)
+            tbl.row(f"{n} clients: saturated post→all p50 ms", g(lambda c: c["throughput"]["all_clients"]["p50_ms"]), False, m)
+            tbl.row(f"{n} clients: saturated POST p50 ms", g(lambda c: c["throughput"]["post"]["p50_ms"]), False, m)
+
+    fanout("LiveView fan-out, one room, one signed-in user (upstream columns: Action Cable, chatter.js subscriptions per client)", "liveview", bool(up))
+    only_ours = Table([(f"ours:{k}", k) for k in our_apps], [], False)
+    only_ours.runs = t.runs
+    fanout("LiveView fan-out, distinct users (one user per client; this port only, app restarted with TRUST_PROXY_HEADERS=1)", "distinct", False, only_ours)
+
+    t.header("Upload + thumbnail (black_hole.jpg, 505 KB)")
+    med = lambda key: (lambda r: statistics.median([x[key] for x in r["upload"]["runs"] if key in x]))
+    t.row("POST with attachment (ms)", med("post_ms"), False, MARKS["upload"])
+    t.row("then GET thumb → 200 (ms)", med("thumb_ms"), False, MARKS["upload"])
+    t.row("POST → thumbnail served (ms)", lambda r: r["upload"]["median_total_ms"], False, MARKS["upload"])
+
+    have_pm = all("process_memory" in c for k in our_apps for r in ours[k] for c in fanout_list(r))
+    if have_pm and any(fanout_list(ours[k][0]) for k in our_apps):
+        t.header("Memory during fan-out, by process (MiB, peak within the phase)",
+                 "App process: this port's BEAM; Rails Puma; Elixir's BEAM; Go/Rust's integrated process. Serving totals add Postgres (this port)\n"
+                 "or Redis, native helpers and Thruster (upstream). PSS apportions shared pages; RssAnon counts them in each process.")
+        for c in fanout_list(ours[our_apps[0]][0]):
+            n = c["clients"]
+            for phase, label in (("connected", "all subscribed, idle"), ("saturated", "saturated fan-out")):
+                t.row(f"{n} clients, {label}: app process Pss", procmem(n, phase, "app"), False, "x")
+                t.row(f"{n} clients, {label}: app process RssAnon", procmem(n, phase, "app_anon"), False, "x")
+                t.row(f"{n} clients, {label}: serving processes Pss", procmem(n, phase, "serving"), False, "x")
+                t.row(f"{n} clients, {label}: whole container Pss", procmem(n, phase, "total"), False, "x")
+
+    # This port only: where the CPU goes.
+    only = Table([(f"ours:{k}", k) for k in our_apps], [], False)
+    only.runs = t.runs
+    only.header("Postgres share of CPU (this port)", "`CPU µs/success` above is app + Postgres; the Postgres container's part follows.")
+    for route, conc in routes:
+        if conc == max(c for _, c in routes) and any(h["route"] == route for r in ours[our_apps[0]] for h in r["http"]):
+            only.row(f"{route} c={conc} Postgres CPU µs/success", lambda r, route=route, conc=conc: next(
+                h["db_cpu_us_per_success"] for h in r["http"] if h["route"] == route and h["conc"] == conc), False)
+
+    print("\n### Background jobs at the end of each rep (Oban)\n")
+    for k in our_apps:
+        for r in ours[k]:
+            p = os.path.join(a.dir, f"{k}-{r['rep']}-jobs.json")
+            if os.path.exists(p):
+                print(f"- {k} rep {r['rep']}: {json.load(open(p))}")
+
+    if up:
+        print(NOTES)
+
+
+if __name__ == "__main__":
+    main()

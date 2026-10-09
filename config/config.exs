@@ -129,8 +129,9 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
-# Use Jason for JSON parsing in Phoenix
-config :phoenix, :json_library, Jason
+# Elixir's built-in JSON (1.18+) for Phoenix: websocket frames, the JSON parser, controller `json/2`.
+# Faster than Jason for the LiveView diffs (bench/TUNING.md). Jason stays a dependency for Ash, Oban and Req.
+config :phoenix, :json_library, JSON
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

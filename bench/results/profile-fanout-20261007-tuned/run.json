@@ -1,0 +1,20 @@
+{
+ "clients": 500,
+ "rate": 80.0,
+ "secs": 10,
+ "image": "campfire-port:bench",
+ "cpu": {
+  "untraced": {
+   "app_cpu_s": 22.05372,
+   "db_cpu_s": 0.852458
+  },
+  "targeted": {
+   "app_cpu_s": 16.449877,
+   "db_cpu_s": 0.635288
+  },
+  "tprof": {
+   "app_cpu_s": 167.800829,
+   "db_cpu_s": 4.131805
+  }
+ }
+}

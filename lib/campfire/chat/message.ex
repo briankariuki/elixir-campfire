@@ -351,6 +351,28 @@ defmodule Campfire.Chat.Message do
   def attachment?(%{attachment_key: key}), do: is_binary(key)
 
   @doc """
+  A fingerprint of the message as it was loaded: the MD5 of the whole struct (attributes, creator,
+  boosts and their boosters) without its metadata, so it changes with anything a render can depend
+  on. `CampfireWeb.MessageComponents` keys its cache of rendered messages on it.
+
+  Messages that went through `Campfire.PubSubBroadcaster` carry it (`with_digest/1`), computed once
+  for all the viewers; for any other, it is computed here.
+  """
+  def digest(%{__metadata__: %{digest: digest}}) when is_binary(digest), do: digest
+  def digest(message), do: compute_digest(message)
+
+  @doc """
+  The message with its `digest/1` in the metadata. Only for a message that is not modified
+  afterwards (a broadcast): the stored digest would not follow the changes.
+  """
+  def with_digest(message),
+    do: Ash.Resource.put_metadata(message, :digest, compute_digest(message))
+
+  defp compute_digest(message) do
+    message |> Map.delete(:__metadata__) |> :erlang.term_to_binary() |> :erlang.md5()
+  end
+
+  @doc """
   Deletes every message by the user, broadcasting each deletion (ban cleanup).
   """
   def remove_all_by_creator(user_id) do

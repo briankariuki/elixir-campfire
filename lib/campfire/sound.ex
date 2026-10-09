@@ -92,12 +92,13 @@ defmodule Campfire.Sound do
   `/play <name>` and `<name>` is a known sound.
   """
   @spec sound_name(String.t() | nil) :: String.t() | nil
-  def sound_name(body) when is_binary(body) do
+  def sound_name("/play " <> _ = body) do
     case Regex.run(~r/\A\/play (\w+)\z/, body) do
       [_, name] -> if exists?(name), do: name
       _ -> nil
     end
   end
 
+  # Not a `/play` command: no regex (every viewer of a room asks for every new message)
   def sound_name(_), do: nil
 end

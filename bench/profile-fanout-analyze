@@ -1,0 +1,174 @@
+#!/usr/bin/env elixir
+# Summarises the output of bench/profile-fanout (run from the host, needs only Elixir):
+#
+#   bench/profile-fanout-analyze bench/results/profile-fanout-<date> > bench/results/profile-fanout-<date>/summary.md
+#
+# Reads tprof-call_time.etf (every function, very slow run, proportions are inflated for cheap hot
+# functions), tprof-targeted.etf (about 40 boundary functions, low overhead: the numbers to trust),
+# and the untraced window's msacc/scheduler/reductions/counter files.
+
+[dir] = System.argv() |> Enum.take(1) |> case do [] -> raise "usage: profile-fanout-analyze DIR"; l -> l end
+
+fmt = fn x, d -> :erlang.float_to_binary(x * 1.0, decimals: d) end
+pct = fn x, total -> fmt.(x * 100 / max(total, 1), 1) <> "%" end
+mfa = fn m, f, a -> "#{inspect(m)}.#{f}/#{a}" end
+
+read = fn name ->
+  path = Path.join(dir, name)
+  if File.exists?(path), do: File.read!(path), else: nil
+end
+
+IO.puts("# Fan-out profile: #{Path.basename(dir)}\n")
+
+if run = read.("run.json") do
+  IO.puts("`run.json`: #{String.trim(run) |> String.replace("\n", " ")}\n")
+end
+
+# ---------------------------------------------------------------------------------------------
+# 1. untraced window
+if counters = read.("counters.txt") do
+  IO.puts("## Untraced window\n")
+  IO.puts("```\n#{counters}\n```\n")
+end
+
+if util = read.("scheduler-utilization.txt") do
+  {list, _} = Code.eval_string(util)
+  total = Enum.find(list, &match?({:total, _, _}, &1))
+  weighted = Enum.find(list, &match?({:weighted, _, _}, &1))
+  normal = for {:normal, id, u, _} <- list, u > 0.01, do: "#{id}:#{fmt.(u * 100, 0)}%"
+  IO.puts("Scheduler wall time (`:scheduler.utilization`): weighted #{elem(weighted, 2)} of the online schedulers (total over all #{length(list) - 2} incl. offline: #{elem(total, 2)}); busy normal schedulers #{Enum.join(normal, " ")}\n")
+end
+
+if msacc = read.("msacc-raw.txt") do
+  {stats, _} = Code.eval_string(msacc)
+  sched = Enum.filter(stats, &(&1.type == :scheduler and &1.counters != %{} and Enum.sum(Map.values(&1.counters)) > 0))
+  sums = Enum.reduce(sched, %{}, fn %{counters: c}, acc -> Map.merge(acc, c, fn _, a, b -> a + b end) end)
+  {total_c, _} = Enum.reduce(sums, {0, nil}, fn {_, v}, {t, _} -> {t + v, nil} end)
+  busy = total_c - Map.get(sums, :sleep, 0)
+  IO.puts("Microstate accounting, normal schedulers that ran (#{length(sched)}), share of wall time and of busy time:\n")
+  IO.puts("| state | % of wall | % of busy |\n|---|---:|---:|")
+  for {k, v} <- Enum.sort_by(sums, fn {_, v} -> -v end) do
+    IO.puts("| #{k} | #{pct.(v, total_c)} | #{if k == :sleep, do: "-", else: pct.(v, busy)} |")
+  end
+  IO.puts("")
+end
+
+if red = read.("reductions-by-class.txt") do
+  IO.puts("Reductions by process class (top):\n\n```\n#{red |> String.split("\n") |> Enum.take(6) |> Enum.join("\n")}\n```\n")
+end
+
+# ---------------------------------------------------------------------------------------------
+# 2. targeted tprof
+agg = fn path ->
+  {:call_time, list} = :erlang.binary_to_term(File.read!(path))
+
+  for {m, f, a, procs} <- list do
+    {m, f, a, Enum.sum(for {_, c, _} <- procs, do: c), Enum.sum(for {_, _, t} <- procs, do: t), procs}
+  end
+end
+
+if File.exists?(Path.join(dir, "tprof-targeted.etf")) do
+  rows = agg.(Path.join(dir, "tprof-targeted.etf"))
+  deliveries = rows |> Enum.find(fn {m, f, a, _, _, _} -> {m, f, a} == {Phoenix.LiveView.Diff, :render, 4} end) |> elem(3)
+  IO.puts("## Targeted tprof (call_time on boundary functions)\n")
+  IO.puts("`deliveries` = LiveView renders in the window = #{deliveries}. us/delivery = time of the function / deliveries (the per-viewer cost of one posted message).\n")
+  IO.puts("| function | calls | total ms | us/call | us/delivery |\n|---|---:|---:|---:|---:|")
+
+  for {m, f, a, c, t, _} <- Enum.sort_by(rows, fn {_, _, _, _, t, _} -> -t end), t > 20_000 do
+    IO.puts("| `#{mfa.(m, f, a)}` | #{c} | #{div(t, 1000)} | #{fmt.(t / max(c, 1), 1)} | #{fmt.(t / max(deliveries, 1), 1)} |")
+  end
+
+  IO.puts("")
+end
+
+# ---------------------------------------------------------------------------------------------
+# 2b. the same, grouped into the buckets of bench/TUNING.md (per delivery = one viewer's share of one posted message)
+if File.exists?(Path.join(dir, "tprof-targeted.etf")) do
+  rows = agg.(Path.join(dir, "tprof-targeted.etf"))
+  deliveries = rows |> Enum.find(fn {m, f, a, _, _, _} -> {m, f, a} == {Phoenix.LiveView.Diff, :render, 4} end) |> elem(3)
+
+  groups = [
+    {"JSON encoding (serializer)", [{Jason, :_, :_}, {JSON, :_, :_}, {Phoenix.Socket.V2.JSONSerializer, :_, :_}, {CampfireWeb.SocketSerializer, :_, :_}]},
+    {"LiveView diff and render (Diff.render, RoomLive.render)", [{Phoenix.LiveView.Diff, :_, :_}, {Phoenix.LiveView.Renderer, :_, :_}, {CampfireWeb.RoomLive, :render, 1}, {Phoenix.LiveView.Lifecycle, :_, :_}, {Phoenix.LiveView.Utils, :_, :_}, {Phoenix.LiveView.Channel, :render_diff, 3}]},
+    {"message component render (MessageComponents, emoji_only?)", [{CampfireWeb.MessageComponents, :_, :_}, {CampfireWeb.MessageBody, :emoji_only?, 1}]},
+    {"render cache lookup and hashing (Cache.fetch, digest)", [{CampfireWeb.MessageBody.Cache, :_, :_}, {CampfireWeb.MessageBody, :digest, 2}, {CampfireWeb.MessageBody, :cached_html, 3}]},
+    {"hand the frame to the transport (Channel.push: send/copy)", [{Phoenix.LiveView.Channel, :push, 3}]},
+    {"websocket framing and socket write (Bandit, ThousandIsland)", [{ThousandIsland.Socket, :send, 2}, {Bandit.WebSocket.Frame, :serialize, :_}, {Bandit.WebSocket.Connection, :handle_info, 3}, {Bandit.WebSocket.Handler, :handle_info, 2}, {Phoenix.Socket, :__info__, 2}]},
+    {"LiveView callbacks (handle_info, stream insert, window, sound)", [{Phoenix.LiveView.Channel, :handle_info, 2}, {CampfireWeb.RoomLive, :handle_info, 2}, {CampfireWeb.RoomLive, :append_messages, 2}, {CampfireWeb.RoomLive, :decorate, 2}, {CampfireWeb.RoomLive, :stop_typing, 2}, {CampfireWeb.RoomLive, :maybe_play_sound, 2}]},
+    {"PubSub dispatch (Registry.dispatch, per post / viewers)", [{Registry, :dispatch, 4}]},
+    {"Ash create + notifiers (per post / viewers)", [{Ash, :create, 3}, {Campfire.Notifiers.Fanout, :notify, 1}]}
+  ]
+
+  match? = fn {gm, gf, ga}, {m, f, a} -> gm == m and gf in [:_, f] and ga in [:_, a] end
+
+  per =
+    for {name, pats} <- groups do
+      t = for {m, f, a, _c, t, _} <- rows, Enum.any?(pats, &match?.(&1, {m, f, a})), reduce: 0, do: (acc -> acc + t)
+      {name, t / max(deliveries, 1)}
+    end
+
+  traced = per |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+  IO.puts("### Where one delivery goes (targeted tprof, us per delivery; tracing only ~40 functions, so close to real)\n")
+  IO.puts("| bucket | us/delivery | share of traced |\n|---|---:|---:|")
+  for {name, us} <- per, do: IO.puts("| #{name} | #{fmt.(us, 1)} | #{pct.(us, traced)} |")
+  IO.puts("| traced total | #{fmt.(traced, 1)} | |")
+
+  # all scheduler/aux/poll threads busy time in the untraced window, per delivery (includes GC, port work, scheduling)
+  with msacc when is_binary(msacc) <- read.("msacc.txt"),
+       run when is_binary(run) <- read.("run.json"),
+       [_, busy] <- Regex.run(~r/Accumulated system run-time\s*:\s*(\d+) us/, msacc),
+       [_, rate] <- Regex.run(~r/"rate":\s*([\d.]+)/, run),
+       [_, clients] <- Regex.run(~r/"clients":\s*(\d+)/, run),
+       [_, secs] <- Regex.run(~r/"secs":\s*(\d+)/, run) do
+    {rate_f, _} = Float.parse(rate)
+    expected = rate_f * String.to_integer(clients) * String.to_integer(secs)
+    IO.puts("| **all threads busy, untraced window (incl. GC, port, scheduling, the poster's Ash/PubSub work)** | #{fmt.(String.to_integer(busy) / expected, 1)} | (#{fmt.(rate_f, 0)} msgs/s x #{clients} clients x #{secs} s = #{round(expected)} deliveries) |")
+  else
+    _ -> :ok
+  end
+
+  IO.puts("")
+end
+
+# ---------------------------------------------------------------------------------------------
+# 3. full tprof grouped
+buckets = [
+  {"JSON encoding (Jason / JSON / serializer)", fn m, _f -> m in [Jason, JSON, :json, Phoenix.Socket.V2.JSONSerializer, CampfireWeb.SocketSerializer] or String.starts_with?(to_string(m), "Elixir.Jason.") or String.starts_with?(to_string(m), "Elixir.JSON.") end},
+  {"websocket framing and writes (Bandit / ThousandIsland / port)", fn m, f -> s = to_string(m); String.starts_with?(s, "Elixir.Bandit") or String.starts_with?(s, "Elixir.ThousandIsland") or s in ["Elixir.WebSockAdapter", "Elixir.Phoenix.Socket", "Elixir.Phoenix.Endpoint.Cowboy2Handler"] or (m == :erts_internal and f == :port_command) or m in [:prim_inet, :inet, :gen_tcp, :inet_tcp] end},
+  {"message component and body render (Campfire web)", fn m, _f -> s = to_string(m); String.starts_with?(s, "Elixir.CampfireWeb.Message") or String.starts_with?(s, "Elixir.CampfireWeb.Embed") or s == "Elixir.CampfireWeb.Paths" end},
+  {"render cache lookup / hashing", fn m, f -> m == :ets or (m == :erlang and f in [:md5, :term_to_binary, :phash2]) or m == :crypto end},
+  {"HEEx runtime: LiveView diff, engine, Phoenix.HTML escaping", fn m, _f -> s = to_string(m); String.starts_with?(s, "Elixir.Phoenix.LiveView") or String.starts_with?(s, "Elixir.Phoenix.Component") or String.starts_with?(s, "Elixir.Phoenix.HTML") or s in ["Elixir.Plug.HTML", "Elixir.Phoenix.Template", "Elixir.Phoenix.Param"] end},
+  {"PubSub dispatch (Phoenix.PubSub, Registry)", fn m, _f -> s = to_string(m); String.starts_with?(s, "Elixir.Phoenix.PubSub") or s in ["Elixir.Registry", "Elixir.Registry.Partition"] or m == :pg end},
+  {"Ash / Ecto / DB / notifiers", fn m, _f -> s = to_string(m); Enum.any?(["Elixir.Ash", "Elixir.Ecto", "Elixir.Postgrex", "Elixir.DBConnection", "Elixir.Spark", "Elixir.Campfire.", "Elixir.Oban", "Elixir.Reactor"], &String.starts_with?(s, &1)) end},
+  {"RoomLive callbacks (Campfire web, other)", fn m, _f -> String.starts_with?(to_string(m), "Elixir.CampfireWeb") end}
+]
+
+if File.exists?(Path.join(dir, "tprof-call_time.etf")) do
+  rows = agg.(Path.join(dir, "tprof-call_time.etf"))
+  total = rows |> Enum.map(fn {_, _, _, _, t, _} -> t end) |> Enum.sum()
+  IO.puts("## Full tprof (every function; tracing inflates cheap, frequent functions)\n")
+  IO.puts("Total traced time #{div(total, 1000)} ms.\n")
+
+  {grouped, rest} =
+    Enum.reduce(rows, {%{}, 0}, fn {m, f, _a, _c, t, _}, {acc, rest} ->
+      case Enum.find(buckets, fn {_, pred} -> pred.(m, f) end) do
+        nil -> {acc, rest + t}
+        {name, _} -> {Map.update(acc, name, t, &(&1 + t)), rest}
+      end
+    end)
+
+  IO.puts("| bucket | time ms | share |\n|---|---:|---:|")
+
+  for {name, t} <- Enum.sort_by(Map.put(grouped, "other (Enum/Map/:lists/:erlang BIFs, GenServer, ...)", rest), fn {_, t} -> -t end) do
+    IO.puts("| #{name} | #{div(t, 1000)} | #{pct.(t, total)} |")
+  end
+
+  IO.puts("\nTop functions:\n")
+  IO.puts("| function | calls | ms | share |\n|---|---:|---:|---:|")
+
+  for {m, f, a, c, t, _} <- rows |> Enum.sort_by(fn {_, _, _, _, t, _} -> -t end) |> Enum.take(25) do
+    IO.puts("| `#{mfa.(m, f, a)}` | #{c} | #{div(t, 1000)} | #{pct.(t, total)} |")
+  end
+
+  IO.puts("")
+end

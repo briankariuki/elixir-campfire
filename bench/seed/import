@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""Convert an upstream parity seed (Rails: SQLite + Active Storage) into this app's seed.
+
+    bench/seed/import [--seed DIR] [--out DIR]
+
+  --seed  the upstream seed: DIR/{db/production.sqlite3, storage/, labels.json}
+          (default: .context/bench-src/once-campfire-rust/parity/.seed/default)
+  --out   where to write (default: bench/seed/default); it is replaced
+
+Writes OUT/campfire.sql (data only: load it into a database migrated by `bin/migrate`),
+OUT/uploads/ (the files named by our upload keys), OUT/labels.json (copied) and OUT/counts.json
+(per-table row counts of the source and of what the SQL inserts, and every skipped row).
+
+Python stdlib only (sqlite3 + html.parser): no new dependencies, and it runs the same on macOS
+and in CI. See bench/seed/README.md for the mapping and the lossy conversions.
+"""
+
+import argparse
+import base64
+import html
+import json
+import os
+import re
+import shutil
+import sqlite3
+import sys
+from html.parser import HTMLParser
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+DEFAULT_SEED = os.path.join(REPO, ".context/bench-src/once-campfire-rust/parity/.seed/default")
+DEFAULT_OUT = os.path.join(REPO, "bench/seed/default")
+
+ROLES = {0: "member", 1: "administrator", 2: "bot"}
+STATUSES = {0: "active", 1: "deactivated", 2: "banned"}
+KINDS = {"Rooms::Open": "open", "Rooms::Closed": "closed", "Rooms::Direct": "direct"}
+INVOLVEMENTS = {"invisible", "nothing", "mentions", "everything"}
+# Campfire.Uploads.Image: the raster types we record dimensions for, and the thumbnail limits.
+RASTER_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+THUMB_TYPES = {"image/png", "image/jpeg", "image/webp"}
+THUMB_MAX_W, THUMB_MAX_H = 1200, 800
+
+MENTION_TYPE = "application/vnd.campfire.mention"
+OPENGRAPH_TYPE = "application/vnd.actiontext.opengraph-embed"
+
+
+# ---------------------------------------------------------------------------------------------
+# SQL literals
+
+
+def lit(value):
+    """A Postgres literal."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "ARRAY[%s]::bigint[]" % ",".join(str(int(v)) for v in value)
+    if isinstance(value, dict):
+        return lit(json.dumps(value, ensure_ascii=False)) + "::jsonb"
+    text = str(value)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    # standard_conforming_strings is on (the default since 9.1): only the quote needs doubling
+    return "'" + text.replace("'", "''") + "'"
+
+
+class Sql:
+    def __init__(self):
+        self.lines = []
+        self.counts = {}
+
+    def insert(self, table, row):
+        cols = ", ".join(row)
+        vals = ", ".join(lit(v) for v in row.values())
+        self.lines.append(f"INSERT INTO {table} ({cols}) VALUES ({vals});")
+        self.counts[table] = self.counts.get(table, 0) + 1
+
+
+# ---------------------------------------------------------------------------------------------
+# HTML (Action Text) -> our plain-text, Markdown-like body
+
+
+class Node:
+    def __init__(self, tag, attrs=None):
+        self.tag = tag
+        self.attrs = dict(attrs or [])
+        self.children = []
+
+    def find_all(self, tag=None, cls=None):
+        for child in self.children:
+            if isinstance(child, Node):
+                classes = (child.attrs.get("class") or "").split()
+                if (tag is None or child.tag == tag) and (cls is None or cls in classes):
+                    yield child
+                yield from child.find_all(tag, cls)
+
+    def text(self):
+        return "".join(c if isinstance(c, str) else c.text() for c in self.children)
+
+
+VOID = {"br", "img", "hr", "input", "meta", "link", "wbr"}
+
+
+class TreeBuilder(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = Node("#root")
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = Node(tag, attrs)
+        self.stack[-1].children.append(node)
+        if tag not in VOID:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        self.stack[-1].children.append(Node(tag, attrs))
+
+    def handle_endtag(self, tag):
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i].tag == tag:
+                del self.stack[i:]
+                return
+
+    def handle_data(self, data):
+        self.stack[-1].children.append(data)
+
+
+def parse_html(source):
+    builder = TreeBuilder()
+    builder.feed(source or "")
+    builder.close()
+    return builder.root
+
+
+BLOCKS = {
+    "p", "div", "ul", "ol", "li", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6",
+    "figure", "table", "thead", "tbody", "tfoot", "tr", "section", "article", "details",
+}
+HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+INLINE_WRAP = {
+    "strong": "**", "b": "**", "em": "*", "i": "*", "s": "~~", "strike": "~~", "del": "~~",
+    "mark": "==",
+}
+WS = re.compile(r"[ \t\r\n\f]+")
+
+
+class Converter:
+    """One message body. After `convert`, `mentioned` and `embed` are set."""
+
+    def __init__(self, users):
+        self.users = users  # id -> name
+        self.mentioned = []
+        self.embed = None
+
+    def convert(self, source):
+        root = parse_html(source)
+        blocks = self.blocks(root.children)
+        out = ""
+        previous = None
+        for kind, text in blocks:
+            if previous is not None:
+                out += "\n\n" if previous == "p" == kind else "\n"
+            out += text
+            previous = kind
+        return out.strip("\n")
+
+    # -- blocks: [(kind, text)], kind in p | heading | list | quote | pre
+
+    def blocks(self, nodes):
+        out, run = [], []
+
+        def flush():
+            if run:
+                text = self.inline(run)
+                if text.strip():
+                    out.append(("p", text))
+                run.clear()
+
+        for node in nodes:
+            if isinstance(node, str) or node.tag not in BLOCKS:
+                run.append(node)
+                continue
+            flush()
+            tag = node.tag
+            if tag in ("ul", "ol"):
+                out.append(("list", "\n".join(self.list_lines(node, 0))))
+            elif tag == "blockquote":
+                inner = self.blocks(node.children)
+                text = "\n".join(t for _, t in inner)
+                if text.strip():
+                    out.append(("quote", "\n".join(("> " + l).rstrip() for l in text.split("\n"))))
+            elif tag == "pre":
+                out.append(("pre", self.fence(node)))
+            elif tag in HEADINGS:
+                text = self.inline(node.children).strip()
+                if text:
+                    out.append(("heading", "# " + text))
+            elif tag == "table" or (tag == "figure" and any(node.find_all("table"))):
+                text = self.table(node)
+                if text:
+                    out.append(("p", text))
+            elif tag == "li":
+                out.extend(self.blocks(node.children))
+            else:  # p, div, figure, section, ...: its own blocks
+                inner = self.blocks(node.children)
+                if inner:
+                    out.extend(inner)
+        flush()
+        return out
+
+    def fence(self, pre):
+        language = re.sub(r"[^\w+#.-]", "", pre.attrs.get("data-language") or "")[:30]
+        code = self.raw_text(pre).strip("\n")
+        return f"```{language}\n{code}\n```"
+
+    def raw_text(self, node):
+        out = ""
+        for child in node.children:
+            if isinstance(child, str):
+                out += child
+            elif child.tag == "br":
+                out += "\n"
+            else:
+                out += self.raw_text(child)
+        return out
+
+    def list_lines(self, list_node, depth):
+        ordered = list_node.tag == "ol"
+        lines, n = [], 0
+        for item in list_node.children:
+            if not isinstance(item, Node) or item.tag != "li":
+                continue
+            n += 1
+            marker = f"{n}." if ordered else "-"
+            inline_nodes, nested = [], []
+            for child in item.children:
+                if isinstance(child, Node) and child.tag in ("ul", "ol"):
+                    nested.append(child)
+                else:
+                    inline_nodes.append(child)
+            text = self.inline(inline_nodes).strip().replace("\n", " ")
+            lines.append("  " * depth + f"{marker} {text}")
+            for sub in nested:
+                lines.extend(self.list_lines(sub, depth + 1))
+        return lines
+
+    def table(self, node):
+        rows = []
+        for tr in node.find_all("tr"):
+            cells = [WS.sub(" ", c.text()).strip() for c in tr.children
+                     if isinstance(c, Node) and c.tag in ("th", "td")]
+            if cells:
+                rows.append(" | ".join(cells))
+        return "\n".join(rows)
+
+    # -- inline: a string
+
+    def inline(self, nodes):
+        text = self.inline_raw(nodes)
+        lines = [WS.sub(" ", l).strip() for l in text.split("\n")]
+        return "\n".join(lines).strip("\n")
+
+    def inline_raw(self, nodes):
+        out = ""
+        for node in nodes:
+            if isinstance(node, str):
+                out += node
+                continue
+            tag = node.tag
+            if tag == "br":
+                out += "\n"
+            elif tag in INLINE_WRAP:
+                out += self.wrap(INLINE_WRAP[tag], self.inline_raw(node.children))
+            elif tag == "code":
+                inner = self.inline_raw(node.children)
+                out += self.wrap("`", inner)
+            elif tag == "a":
+                out += self.link(node)
+            elif tag == "action-text-attachment":
+                out += self.attachment(node)
+            elif tag == "img":
+                out += node.attrs.get("alt") or ""
+            elif tag in BLOCKS:  # a block inside an inline run (e.g. <p> in <li>)
+                out += " " + self.inline_raw(node.children) + " "
+            else:  # u, span, ... : the text only
+                out += self.inline_raw(node.children)
+        return out
+
+    @staticmethod
+    def wrap(marker, inner):
+        if not inner.strip():
+            return inner
+        lead = inner[: len(inner) - len(inner.lstrip())]
+        trail = inner[len(inner.rstrip()):]
+        return f"{lead}{marker}{inner.strip()}{marker}{trail}"
+
+    def link(self, node):
+        text = WS.sub(" ", self.inline_raw(node.children)).strip()
+        href = (node.attrs.get("href") or "").strip()
+        if not re.match(r"https?://[^\s()<>\"]+\Z", href):
+            return text
+        if not text or text == href:
+            return href
+        return f"[{text}]({href})"
+
+    def attachment(self, node):
+        content_type = node.attrs.get("content-type") or ""
+        if content_type == MENTION_TYPE:
+            user_id = sgid_user_id(node.attrs.get("sgid") or "")
+            name = self.users.get(user_id)
+            if name is None:
+                return ""
+            if user_id not in self.mentioned:
+                self.mentioned.append(user_id)
+            return "@" + name
+        if content_type == OPENGRAPH_TYPE:
+            self.embed = self.embed or opengraph_embed(node.attrs)
+            return ""
+        # Unknown attachable (none in the seed): whatever text it carries
+        return node.attrs.get("caption") or node.attrs.get("filename") or ""
+
+
+def sgid_user_id(sgid):
+    """The User id inside a signed global id (`base64(json)--digest`); the signature isn't checked."""
+    payload = sgid.split("--")[0]
+    try:
+        decoded = base64.b64decode(payload + "=" * (-len(payload) % 4)).decode("utf-8", "replace")
+    except ValueError:
+        return None
+    for _ in range(2):
+        match = re.search(r"gid://[^/]+/User/(\d+)", decoded)
+        if match:
+            return int(match.group(1))
+        try:  # Rails 7 "message" style: {"_rails": {"message": base64(marshal(gid))}}
+            rails = json.loads(decoded)["_rails"]
+            inner = rails.get("data") or rails.get("message") or ""
+            decoded = base64.b64decode(inner + "=" * (-len(inner) % 4)).decode("utf-8", "replace")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return None
+    return None
+
+
+def opengraph_embed(attrs):
+    """Our `Message.embed` map from an opengraph-embed attachment (Lexxy: `content` HTML; Trix: attributes)."""
+    content = attrs.get("content")
+    if content:
+        root = parse_html(content)
+        title_link = next(root.find_all("a", "og-embed__title"), None)
+        title_div = next(root.find_all("div", "og-embed__title"), None)
+        description = next(root.find_all("div", "og-embed__description"), None)
+        image = next(root.find_all("img"), None)
+        link = next(title_div.find_all("a"), None) if title_div else title_link
+        embed = {
+            "url": link.attrs.get("href") if link else None,
+            "title": WS.sub(" ", title_div.text()).strip() if title_div else None,
+            "description": WS.sub(" ", description.text()).strip() if description else None,
+            "image_url": image.attrs.get("src") if image else None,
+            "site_name": None,
+        }
+    else:  # Trix era: url = the image, href = the link, filename = the title, caption = the text
+        embed = {
+            "url": attrs.get("href"),
+            "title": attrs.get("filename"),
+            "description": attrs.get("caption"),
+            "image_url": attrs.get("url"),
+            "site_name": None,
+        }
+    return embed if embed.get("title") else None
+
+
+# ---------------------------------------------------------------------------------------------
+# Files
+
+
+def upload_extension(filename):
+    """Campfire.Uploads' rule: a lowercase `.ext` of 1-10 alphanumerics, else none."""
+    ext = os.path.splitext(filename or "")[1].lower()
+    return ext if re.fullmatch(r"\.[a-z0-9]{1,10}", ext) else ""
+
+
+class Files:
+    def __init__(self, seed, out):
+        self.storage = os.path.join(seed, "storage")
+        self.out = os.path.join(out, "uploads")
+        os.makedirs(self.out, exist_ok=True)
+        self.copied = 0
+        self.missing = []
+
+    def copy(self, blob):
+        """Copies a blob into uploads/ and returns its upload key (`<blob key><ext>`), or None."""
+        key = blob["key"]
+        src = os.path.join(self.storage, key[:2], key[2:4], key)
+        ours = key + upload_extension(blob["filename"])
+        if not os.path.isfile(src):
+            self.missing.append(key)
+            return None
+        shutil.copyfile(src, os.path.join(self.out, ours))
+        self.copied += 1
+        return ours
+
+
+# ---------------------------------------------------------------------------------------------
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--seed", default=DEFAULT_SEED)
+    ap.add_argument("--out", default=DEFAULT_OUT)
+    args = ap.parse_args()
+
+    db_path = os.path.join(args.seed, "db", "production.sqlite3")
+    if not os.path.isfile(db_path):
+        sys.exit(f"import: no {db_path} (build it: see bench/seed/README.md)")
+    shutil.rmtree(args.out, ignore_errors=True)
+    os.makedirs(args.out)
+
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+
+    def rows(sql, *params):
+        return [dict(r) for r in db.execute(sql, params)]
+
+    source_counts = {
+        t: db.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+        for t in ("accounts", "users", "rooms", "memberships", "messages", "boosts", "searches",
+                  "sessions", "bans", "webhooks", "push_subscriptions", "action_text_rich_texts",
+                  "active_storage_blobs")
+    }
+
+    blobs = {b["id"]: b for b in rows("SELECT * FROM active_storage_blobs")}
+    attached = {}  # (record_type, record_id, name) -> blob
+    for a in rows("SELECT * FROM active_storage_attachments"):
+        attached[(a["record_type"], a["record_id"], a["name"])] = blobs[a["blob_id"]]
+    variants = {}  # original blob id -> [variant blob]
+    for vr in rows("SELECT * FROM active_storage_variant_records ORDER BY id"):
+        blob = attached.get(("ActiveStorage::VariantRecord", vr["id"], "image"))
+        if blob:
+            variants.setdefault(vr["blob_id"], []).append(blob)
+
+    files = Files(args.seed, args.out)
+    sql = Sql()
+    skipped = []
+    out = sql.lines
+    out.append("-- Generated by bench/seed/import from the upstream parity seed; do not edit.")
+    out.append("-- Data only: run the app's migrations first (bin/migrate), then load this file with")
+    out.append("-- psql -v ON_ERROR_STOP=1 -q -f campfire.sql   (it has its own BEGIN/COMMIT)")
+    out.append("BEGIN;")
+
+    # accounts ---------------------------------------------------------------------------------
+    for a in rows("SELECT * FROM accounts ORDER BY id"):
+        settings = json.loads(a["settings"]) if a["settings"] else {}
+        logo = attached.get(("Account", a["id"], "logo"))
+        sql.insert("accounts", {
+            "id": a["id"], "name": a["name"], "join_code": a["join_code"],
+            "logo_key": files.copy(logo) if logo else None,
+            "restrict_room_creation_to_administrators":
+                bool(settings.get("restrict_room_creation_to_administrators", False)),
+            "singleton_guard": a["singleton_guard"], "custom_styles": a["custom_styles"] or None,
+            "inserted_at": a["created_at"], "updated_at": a["updated_at"],
+        })
+
+    # users ------------------------------------------------------------------------------------
+    users = rows("SELECT * FROM users ORDER BY id")
+    names = {u["id"]: u["name"] for u in users}
+    for u in users:
+        avatar = attached.get(("User", u["id"], "avatar"))
+        sql.insert("users", {
+            "id": u["id"], "name": u["name"], "email_address": u["email_address"],
+            "password_hash": u["password_digest"], "bio": u["bio"] if "bio" in u else None,
+            "role": ROLES[u["role"]], "status": STATUSES[u["status"]],
+            "bot_token": u["bot_token"], "avatar_key": files.copy(avatar) if avatar else None,
+            "last_room_id": None,  # Rails has no such column; the app sets it on first visit
+            "inserted_at": u["created_at"], "updated_at": u["updated_at"],
+        })
+    user_ids = set(names)
+
+    # rooms (+ memberships, for the direct keys) -----------------------------------------------
+    rooms = rows("SELECT * FROM rooms ORDER BY id")
+    memberships = rows("SELECT * FROM memberships ORDER BY id")
+    room_ids = {r["id"] for r in rooms}
+    members = {}
+    for m in memberships:
+        members.setdefault(m["room_id"], []).append(m["user_id"])
+    for r in rooms:
+        kind = KINDS[r["type"]]
+        if r["creator_id"] not in user_ids:
+            skipped.append({"table": "rooms", "id": r["id"], "why": "creator missing"})
+            room_ids.discard(r["id"])
+            continue
+        direct_key = None
+        if kind == "direct":
+            direct_key = "-".join(str(i) for i in sorted(set(members.get(r["id"], []))))
+        sql.insert("rooms", {
+            "id": r["id"], "name": r["name"], "kind": kind, "direct_key": direct_key,
+            "creator_id": r["creator_id"], "inserted_at": r["created_at"], "updated_at": r["updated_at"],
+        })
+
+    for m in memberships:
+        if m["room_id"] not in room_ids or m["user_id"] not in user_ids:
+            skipped.append({"table": "memberships", "id": m["id"], "why": "room or user missing"})
+            continue
+        involvement = m["involvement"] if m["involvement"] in INVOLVEMENTS else "mentions"
+        sql.insert("memberships", {
+            "id": m["id"], "room_id": m["room_id"], "user_id": m["user_id"],
+            "involvement": involvement, "unread_at": m["unread_at"],
+            "inserted_at": m["created_at"], "updated_at": m["updated_at"],
+        })
+
+    # messages ---------------------------------------------------------------------------------
+    bodies = {r["record_id"]: r["body"] for r in rows(
+        "SELECT record_id, body FROM action_text_rich_texts WHERE record_type = 'Message' AND name = 'body'")}
+    message_rooms = {}
+    for m in rows("SELECT * FROM messages ORDER BY id"):
+        if m["room_id"] not in room_ids or m["creator_id"] not in user_ids:
+            skipped.append({"table": "messages", "id": m["id"], "why": "room or creator missing"})
+            continue
+        message_rooms[m["id"]] = m["room_id"]
+        conv = Converter(names)
+        body = conv.convert(bodies.get(m["id"]))
+        row = {
+            "id": m["id"], "room_id": m["room_id"], "creator_id": m["creator_id"], "body": body,
+            "client_message_id": m["client_message_id"] or f"import-{m['id']}",
+            "mentioned_user_ids": conv.mentioned,
+            "attachment_key": None, "attachment_filename": None, "attachment_content_type": None,
+            "attachment_byte_size": None, "attachment_width": None, "attachment_height": None,
+            "attachment_thumbnail_key": None, "embed": conv.embed,
+            "inserted_at": m["created_at"], "updated_at": m["updated_at"],
+        }
+        blob = attached.get(("Message", m["id"], "attachment"))
+        if blob:
+            meta = json.loads(blob["metadata"] or "{}")
+            ctype = blob["content_type"]
+            row.update(
+                attachment_key=files.copy(blob), attachment_filename=blob["filename"],
+                attachment_content_type=ctype, attachment_byte_size=blob["byte_size"],
+            )
+            width, height = meta.get("width"), meta.get("height")
+            if ctype in RASTER_TYPES and width and height:
+                row["attachment_width"], row["attachment_height"] = int(width), int(height)
+                # Like the app: a thumbnail exists only for images larger than 1200x800
+                if ctype in THUMB_TYPES and (width > THUMB_MAX_W or height > THUMB_MAX_H):
+                    for variant in variants.get(blob["id"], []):
+                        if variant["content_type"] == ctype:
+                            row["attachment_thumbnail_key"] = files.copy(variant)
+                            break
+        sql.insert("messages", row)
+
+    # boosts, searches, sessions, bans, webhooks ----------------------------------------------
+    for b in rows("SELECT * FROM boosts ORDER BY id"):
+        if b["message_id"] not in message_rooms or b["booster_id"] not in user_ids:
+            skipped.append({"table": "boosts", "id": b["id"], "why": "message or booster missing"})
+            continue
+        sql.insert("boosts", {
+            "id": b["id"], "message_id": b["message_id"], "room_id": message_rooms[b["message_id"]],
+            "booster_id": b["booster_id"], "content": b["content"],
+            "inserted_at": b["created_at"], "updated_at": b["updated_at"],
+        })
+    for s in rows("SELECT * FROM searches ORDER BY id"):
+        sql.insert("searches", {
+            "id": s["id"], "user_id": s["user_id"], "query": s["query"],
+            "inserted_at": s["created_at"], "updated_at": s["updated_at"],
+        })
+    for s in rows("SELECT * FROM sessions ORDER BY id"):
+        sql.insert("sessions", {
+            "id": s["id"], "user_id": s["user_id"], "token": s["token"],
+            "ip_address": s["ip_address"], "user_agent": s["user_agent"],
+            "last_active_at": s["last_active_at"],
+            "inserted_at": s["created_at"], "updated_at": s["updated_at"],
+        })
+    for b in rows("SELECT * FROM bans ORDER BY id"):
+        sql.insert("bans", {
+            "id": b["id"], "user_id": b["user_id"], "ip_address": b["ip_address"],
+            "inserted_at": b["created_at"], "updated_at": b["updated_at"],
+        })
+    for w in rows("SELECT * FROM webhooks ORDER BY id"):
+        sql.insert("webhooks", {
+            "id": w["id"], "user_id": w["user_id"], "url": w["url"] or "",
+            "inserted_at": w["created_at"], "updated_at": w["updated_at"],
+        })
+
+    # sequences: keep the upstream ids, continue after them --------------------------------------
+    out.append("DO $$ DECLARE t text; BEGIN")
+    out.append("  FOREACH t IN ARRAY ARRAY['accounts', 'users', 'rooms', 'memberships', 'messages', 'boosts',")
+    out.append("                           'searches', 'sessions', 'bans', 'webhooks'] LOOP")
+    out.append("    EXECUTE format('SELECT setval(pg_get_serial_sequence(%L, %L), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM %I', t, 'id', t);")
+    out.append("  END LOOP;")
+    out.append("END $$;")
+    out.append("COMMIT;")
+    out.append("ANALYZE;")
+
+    with open(os.path.join(args.out, "campfire.sql"), "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    shutil.copyfile(os.path.join(args.seed, "labels.json"), os.path.join(args.out, "labels.json"))
+    with open(os.path.join(args.out, "counts.json"), "w") as f:
+        json.dump({"sqlite": source_counts, "postgres": sql.counts, "skipped": skipped,
+                   "uploads": files.copied, "missing_files": files.missing}, f, indent=2)
+        f.write("\n")
+
+    print(f"import: {args.out}")
+    for table, n in sql.counts.items():
+        print(f"  {table:12} {source_counts.get(table, '?'):>5} -> {n}")
+    print(f"  uploads      {files.copied} files")
+    for s in skipped:
+        print(f"  skipped {s['table']} {s['id']}: {s['why']}")
+    if files.missing:
+        print(f"  missing files: {files.missing}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

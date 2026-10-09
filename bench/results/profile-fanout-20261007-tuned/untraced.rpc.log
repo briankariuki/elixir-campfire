@@ -1,0 +1,6 @@
+=ESOCK WARNING MSG==== 07-Oct-2026::18:33:51.680742 ===
+
+[UNIX-ESSIO] Failed open sctp dynamic library: libsctp.so.1
+
+
+--- stderr

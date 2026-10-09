@@ -11,8 +11,17 @@ defmodule CampfireWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  # The websocket speaks Phoenix's V1/V2 JSON protocols, except that V2 encodes a diff once for all
+  # viewers. No `compress: true` (permessage-deflate): the benchmark's frames shrink ~70x, but
+  # fan-out throughput halves and each connection costs ~0.45 MB more, see bench/TUNING.md.
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [:peer_data, :x_headers, session: @session_options]],
+    websocket: [
+      connect_info: [:peer_data, :x_headers, session: @session_options],
+      serializer: [
+        {Phoenix.Socket.V1.JSONSerializer, "~> 1.0.0"},
+        {CampfireWeb.SocketSerializer, "~> 2.0.0"}
+      ]
+    ],
     longpoll: [connect_info: [:peer_data, :x_headers, session: @session_options]]
 
   # X-Version / X-Rev on every response, static files included

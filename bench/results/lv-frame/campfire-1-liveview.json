@@ -1,0 +1,821 @@
+[
+ {
+  "clients": 100,
+  "connect_secs": 0.59,
+  "deflate": false,
+  "deflate_sockets": 0,
+  "dropped": 0,
+  "errors": {},
+  "failed": 0,
+  "join": {
+   "max_ms": 208.255,
+   "mean_ms": 123.24,
+   "n": 100,
+   "p50_ms": 118.271,
+   "p90_ms": 191.615,
+   "p99_ms": 204.159
+  },
+  "latency": {
+   "all_clients": {
+    "max_ms": 32.063,
+    "mean_ms": 20.21,
+    "n": 30,
+    "p50_ms": 20.255,
+    "p90_ms": 23.903,
+    "p99_ms": 32.063
+   },
+   "complete": 30,
+   "messages": 30,
+   "per_client": {
+    "max_ms": 32.063,
+    "mean_ms": 19.21,
+    "n": 3000,
+    "p50_ms": 19.439,
+    "p90_ms": 23.279,
+    "p99_ms": 31.567
+   },
+   "post": {
+    "max_ms": 32.863,
+    "mean_ms": 20.47,
+    "n": 30,
+    "p50_ms": 20.335,
+    "p90_ms": 24.575,
+    "p99_ms": 32.863
+   }
+  },
+  "mode": "liveview",
+  "page": {
+   "max_ms": 319.487,
+   "mean_ms": 131.76,
+   "n": 100,
+   "p50_ms": 121.983,
+   "p90_ms": 169.855,
+   "p99_ms": 317.695
+  },
+  "ready": 100,
+  "subscriptions_per_client": 1,
+  "throughput": {
+   "all_clients": {
+    "max_ms": 72.831,
+    "mean_ms": 26.94,
+    "n": 2239,
+    "p50_ms": 26.239,
+    "p90_ms": 34.975,
+    "p99_ms": 46.367
+   },
+   "complete": 2239,
+   "delivered_msgs_per_sec": 149.0,
+   "drain_secs": 0.0,
+   "frames_per_sec": 14903.0,
+   "per_client": {
+    "max_ms": 72.831,
+    "mean_ms": 25.9,
+    "n": 223900,
+    "p50_ms": 25.215,
+    "p90_ms": 33.631,
+    "p99_ms": 44.767
+   },
+   "post": {
+    "max_ms": 73.151,
+    "mean_ms": 26.82,
+    "n": 2239,
+    "p50_ms": 26.111,
+    "p90_ms": 34.559,
+    "p99_ms": 46.527
+   },
+   "posted": 2239,
+   "posters": 4,
+   "posts_per_sec": 149.0,
+   "wire_mb_per_sec": 89.9
+  },
+  "users": 1,
+  "process_memory": {
+   "login": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 353.9,
+      "peak_anon_mb": 286.6,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 64.2,
+      "peak_anon_mb": 57.9,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 418.6
+   },
+   "connect": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 513.4,
+      "peak_anon_mb": 446.1,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 75.5,
+      "peak_anon_mb": 69.2,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 589.4
+   },
+   "connected": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 585.5,
+      "peak_anon_mb": 518.2,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 75.6,
+      "peak_anon_mb": 69.3,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 661.6
+   },
+   "paced": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 585.0,
+      "peak_anon_mb": 517.7,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 78.6,
+      "peak_anon_mb": 72.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 661.5
+   },
+   "paced_drained": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 526.5,
+      "peak_anon_mb": 459.2,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 78.6,
+      "peak_anon_mb": 72.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 605.6
+   },
+   "saturated": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 546.8,
+      "peak_anon_mb": 479.4,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 84.9,
+      "peak_anon_mb": 76.4,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 627.0
+   },
+   "saturated_posted": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 540.2,
+      "peak_anon_mb": 472.9,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 80.0,
+      "peak_anon_mb": 72.3,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 620.7
+   },
+   "saturated_drained": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 540.2,
+      "peak_anon_mb": 472.9,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 80.0,
+      "peak_anon_mb": 72.3,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 620.7
+   },
+   "done": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 540.2,
+      "peak_anon_mb": 472.9,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 80.0,
+      "peak_anon_mb": 72.4,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 620.7
+   }
+  }
+ },
+ {
+  "clients": 500,
+  "connect_secs": 2.83,
+  "deflate": false,
+  "deflate_sockets": 0,
+  "dropped": 0,
+  "errors": {},
+  "failed": 0,
+  "join": {
+   "max_ms": 253.183,
+   "mean_ms": 124.96,
+   "n": 500,
+   "p50_ms": 124.031,
+   "p90_ms": 171.135,
+   "p99_ms": 222.975
+  },
+  "latency": {
+   "all_clients": {
+    "max_ms": 44.415,
+    "mean_ms": 32.48,
+    "n": 30,
+    "p50_ms": 32.191,
+    "p90_ms": 38.591,
+    "p99_ms": 44.415
+   },
+   "complete": 30,
+   "messages": 30,
+   "per_client": {
+    "max_ms": 44.415,
+    "mean_ms": 28.5,
+    "n": 15000,
+    "p50_ms": 28.303,
+    "p90_ms": 36.639,
+    "p99_ms": 42.271
+   },
+   "post": {
+    "max_ms": 44.831,
+    "mean_ms": 33.49,
+    "n": 30,
+    "p50_ms": 32.383,
+    "p90_ms": 39.551,
+    "p99_ms": 44.831
+   }
+  },
+  "mode": "liveview",
+  "page": {
+   "max_ms": 321.791,
+   "mean_ms": 147.03,
+   "n": 500,
+   "p50_ms": 140.799,
+   "p90_ms": 197.759,
+   "p99_ms": 271.103
+  },
+  "ready": 500,
+  "subscriptions_per_client": 1,
+  "throughput": {
+   "all_clients": {
+    "max_ms": 140.799,
+    "mean_ms": 70.95,
+    "n": 848,
+    "p50_ms": 69.567,
+    "p90_ms": 91.071,
+    "p99_ms": 116.927
+   },
+   "complete": 848,
+   "delivered_msgs_per_sec": 56.3,
+   "drain_secs": 0.0,
+   "frames_per_sec": 28150.0,
+   "per_client": {
+    "max_ms": 140.799,
+    "mean_ms": 67.04,
+    "n": 424000,
+    "p50_ms": 66.047,
+    "p90_ms": 87.167,
+    "p99_ms": 112.639
+   },
+   "post": {
+    "max_ms": 148.607,
+    "mean_ms": 70.93,
+    "n": 848,
+    "p50_ms": 69.183,
+    "p90_ms": 91.519,
+    "p99_ms": 122.047
+   },
+   "posted": 848,
+   "posters": 4,
+   "posts_per_sec": 56.3,
+   "wire_mb_per_sec": 169.7
+  },
+  "users": 1,
+  "process_memory": {
+   "login": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 482.4,
+      "peak_anon_mb": 415.1,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 80.0,
+      "peak_anon_mb": 72.4,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 563.0
+   },
+   "connect": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1395.6,
+      "peak_anon_mb": 1328.2,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.6,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1481.7
+   },
+   "connected": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1399.7,
+      "peak_anon_mb": 1332.4,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.6,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1485.8
+   },
+   "paced": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.5,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1489.6,
+      "peak_anon_mb": 1422.2,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.6,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1575.7
+   },
+   "paced_drained": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.2,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1084.3,
+      "peak_anon_mb": 1020.5,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.6,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1170.2
+   },
+   "saturated": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1120.8,
+      "peak_anon_mb": 1057.0,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 88.0,
+      "peak_anon_mb": 81.4,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1206.7
+   },
+   "saturated_posted": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1062.1,
+      "peak_anon_mb": 998.3,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.0,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1148.3
+   },
+   "saturated_drained": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1062.1,
+      "peak_anon_mb": 998.3,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.0,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1148.3
+   },
+   "done": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1062.1,
+      "peak_anon_mb": 998.3,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.0,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1148.3
+   }
+  }
+ },
+ {
+  "clients": 1000,
+  "connect_secs": 5.88,
+  "deflate": false,
+  "deflate_sockets": 0,
+  "dropped": 0,
+  "errors": {},
+  "failed": 0,
+  "join": {
+   "max_ms": 270.591,
+   "mean_ms": 137.62,
+   "n": 1000,
+   "p50_ms": 130.559,
+   "p90_ms": 189.951,
+   "p99_ms": 255.103
+  },
+  "latency": {
+   "all_clients": {
+    "max_ms": 77.631,
+    "mean_ms": 47.35,
+    "n": 30,
+    "p50_ms": 45.855,
+    "p90_ms": 57.919,
+    "p99_ms": 77.631
+   },
+   "complete": 30,
+   "messages": 30,
+   "per_client": {
+    "max_ms": 77.631,
+    "mean_ms": 38.46,
+    "n": 30000,
+    "p50_ms": 38.655,
+    "p90_ms": 49.951,
+    "p99_ms": 68.671
+   },
+   "post": {
+    "max_ms": 77.247,
+    "mean_ms": 45.91,
+    "n": 30,
+    "p50_ms": 44.255,
+    "p90_ms": 57.919,
+    "p99_ms": 77.247
+   }
+  },
+  "mode": "liveview",
+  "page": {
+   "max_ms": 276.479,
+   "mean_ms": 148.88,
+   "n": 1000,
+   "p50_ms": 145.023,
+   "p90_ms": 200.703,
+   "p99_ms": 250.111
+  },
+  "ready": 1000,
+  "subscriptions_per_client": 1,
+  "throughput": {
+   "all_clients": {
+    "max_ms": 215.167,
+    "mean_ms": 116.12,
+    "n": 516,
+    "p50_ms": 115.007,
+    "p90_ms": 149.759,
+    "p99_ms": 197.247
+   },
+   "complete": 516,
+   "delivered_msgs_per_sec": 34.2,
+   "drain_secs": 0.0,
+   "frames_per_sec": 34236.0,
+   "per_client": {
+    "max_ms": 215.167,
+    "mean_ms": 106.89,
+    "n": 516000,
+    "p50_ms": 107.263,
+    "p90_ms": 137.215,
+    "p99_ms": 189.439
+   },
+   "post": {
+    "max_ms": 236.671,
+    "mean_ms": 116.63,
+    "n": 516,
+    "p50_ms": 115.711,
+    "p90_ms": 153.727,
+    "p99_ms": 194.687
+   },
+   "posted": 516,
+   "posters": 4,
+   "posts_per_sec": 34.2,
+   "wire_mb_per_sec": 206.4
+  },
+  "users": 1,
+  "process_memory": {
+   "login": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 651.7,
+      "peak_anon_mb": 587.9,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.0,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 737.9
+   },
+   "connect": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 2322.3,
+      "peak_anon_mb": 2258.4,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.0,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 2408.5
+   },
+   "connected": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 2366.9,
+      "peak_anon_mb": 2303.0,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.0,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 2453.1
+   },
+   "paced": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 2526.2,
+      "peak_anon_mb": 2462.3,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.1,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 2612.5
+   },
+   "paced_drained": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1688.7,
+      "peak_anon_mb": 1624.8,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 86.1,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1775.0
+   },
+   "saturated": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.3,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1792.0,
+      "peak_anon_mb": 1728.1,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 87.8,
+      "peak_anon_mb": 81.4,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1878.3
+   },
+   "saturated_posted": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.1,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1660.0,
+      "peak_anon_mb": 1599.1,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.9,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1746.0
+   },
+   "saturated_drained": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.1,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1660.0,
+      "peak_anon_mb": 1599.1,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.9,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1746.0
+   },
+   "done": {
+    "roles": {
+     "other": {
+      "peak_pss_mb": 0.1,
+      "peak_anon_mb": 0.1,
+      "procs": 1
+     },
+     "beam": {
+      "peak_pss_mb": 1669.5,
+      "peak_anon_mb": 1608.6,
+      "procs": 5
+     },
+     "postgres": {
+      "peak_pss_mb": 85.9,
+      "peak_anon_mb": 78.0,
+      "procs": 17
+     }
+    },
+    "peak_total_pss_mb": 1755.5
+   }
+  }
+ }
+]

@@ -117,6 +117,60 @@ defmodule CampfireWeb.MessageComponents do
     """
   end
 
+  attr :id, :string, required: true
+  attr :message, :map, required: true
+  attr :current_user, :map, required: true
+  attr :users, :map, default: %{}, doc: "%{id => user}, used to render mentions"
+  attr :highlighted, :boolean, default: false
+
+  @doc """
+  `message/1` for the room, where every connected viewer renders each new message: the markup (the
+  same HTML) is rendered once and the viewers only look it up, which also makes the stream insert a
+  single string in the LiveView diff instead of the message's whole template tree.
+
+  The cache key (`CampfireWeb.MessageHtmlCache`) holds everything the output depends on: the
+  message as loaded (`Message.digest/1`: attributes, creator, boosts), the mention markup, the
+  `id` and `highlighted`, and what differs between viewers: whether they wrote the message, are
+  mentioned in it or are administrators, and which boosts are theirs. A message that is being edited
+  or boosted with a custom form by this viewer is rendered on its own.
+  """
+  def cached_message(assigns) do
+    assigns = assign(assigns, :html, message_html(assigns))
+
+    ~H"{@html}"
+  end
+
+  defp message_html(%{message: message} = assigns) do
+    if metadata(message, :editing) == true or metadata(message, :boosting) == true do
+      {:safe, render_to_iodata(assigns)}
+    else
+      key =
+        {assigns.id, Message.digest(message), viewer_class(assigns.current_user, message),
+         MessageBody.mention_digest(message, assigns.users), assigns.highlighted}
+
+      html =
+        MessageBody.Cache.fetch(
+          key,
+          fn -> assigns |> render_to_iodata() |> IO.iodata_to_binary() end,
+          CampfireWeb.MessageHtmlCache
+        )
+
+      {:safe, html}
+    end
+  end
+
+  defp render_to_iodata(assigns) do
+    assigns |> Map.put(:__changed__, nil) |> message() |> Phoenix.HTML.Safe.to_iodata()
+  end
+
+  # The viewer-dependent parts of `message/1`: author, mentioned, edit rights (the author or an
+  # administrator) and the boosts they can delete (their own)
+  defp viewer_class(user, message) do
+    {message.creator_id == user.id, user.id in (message.mentioned_user_ids || []),
+     user.role == :administrator,
+     for(boost <- message.boosts, boost.booster_id == user.id, do: boost.id)}
+  end
+
   ## Body
 
   attr :message, :map, required: true

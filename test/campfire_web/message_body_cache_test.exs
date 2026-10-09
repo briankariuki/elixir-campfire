@@ -181,6 +181,46 @@ defmodule CampfireWeb.MessageBodyCacheTest do
     end
   end
 
+  describe "concurrent fetches of one missing key" do
+    test "render once, everybody gets the result" do
+      cache = start_cache(:single_flight_cache, 20)
+      renders = :counters.new(1, [])
+
+      render = fn ->
+        :counters.add(renders, 1, 1)
+        Process.sleep(20)
+        "html"
+      end
+
+      results =
+        1..50
+        |> Task.async_stream(fn _ -> Cache.fetch(:key, render, cache) end, max_concurrency: 50)
+        |> Enum.map(fn {:ok, html} -> html end)
+
+      assert results == List.duplicate("html", 50)
+      assert :counters.get(renders, 1) == 1
+    end
+
+    test "a leader that raises leaves nothing behind, the next fetch renders" do
+      cache = start_cache(:single_flight_raise_cache, 20)
+
+      assert_raise RuntimeError, "boom", fn ->
+        Cache.fetch(:key, fn -> raise "boom" end, cache)
+      end
+
+      refute :ets.member(cache, :key)
+      assert Cache.fetch(:key, fn -> "html" end, cache) == "html"
+    end
+
+    test "a leader that died without cleaning up is not waited for forever" do
+      cache = start_cache(:single_flight_stale_cache, 20)
+      :ets.insert(cache, {:key, {:"$cache_pending", self()}, 0})
+
+      assert Cache.fetch(:key, fn -> "html" end, cache) == "html"
+      assert Cache.fetch(:key, fn -> "other" end, cache) == "html"
+    end
+  end
+
   defp start_cache(name, max) do
     start_supervised!({Cache, name: name, max_entries: max})
     name
