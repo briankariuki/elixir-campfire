@@ -42,9 +42,9 @@ defmodule CampfireWeb.RoomComponents do
   Whether to show the system welcome card: the original room, while all its messages fit in one
   page (the original's `!messages.paged?`).
   """
-  def show_welcome?(original_room?, account, more_older?, more_newer?, loaded_ids) do
+  def show_welcome?(original_room?, account, more_older?, more_newer?, loaded_count) do
     original_room? and not is_nil(account) and not more_older? and not more_newer? and
-      length(loaded_ids) < @page_size
+      loaded_count < @page_size
   end
 
   attr :account, :any, default: nil, doc: "the account; the logo is shown only when it has one"

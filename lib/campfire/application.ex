@@ -16,6 +16,17 @@ defmodule Campfire.Application do
       Campfire.Presence,
       Campfire.AccountCache,
       CampfireWeb.MessageBody.Cache,
+      # Encoded websocket diffs, see CampfireWeb.SocketSerializer. Entries are only useful for the
+      # moments it takes every viewer to render the same message, so it is small.
+      Supervisor.child_spec(
+        {CampfireWeb.MessageBody.Cache, name: CampfireWeb.FrameCache, max_entries: 1_000},
+        id: CampfireWeb.FrameCache
+      ),
+      # Whole messages rendered once for the viewers of a room, see CampfireWeb.MessageComponents.cached_message/1
+      Supervisor.child_spec(
+        {CampfireWeb.MessageBody.Cache, name: CampfireWeb.MessageHtmlCache, max_entries: 2_000},
+        id: CampfireWeb.MessageHtmlCache
+      ),
       # Background jobs: webhook delivery and ban cleanup (AshOban triggers). After PubSub,
       # because jobs broadcast.
       {Oban,

@@ -11,10 +11,13 @@ defmodule Campfire.PubSubBroadcaster do
       `{event, record}`. A message record carries `Campfire.Chat.Message.loads/0`. A boost event
       carries the boost with its `:message` loaded the same way (boosts and boosters included),
       read here once after commit, so each subscriber re-renders `boost.message` instead of
-      reading it itself
+      reading it itself. Messages carry their `Message.digest/1` (computed once here, for
+      every subscriber's render cache)
     * `room_read|room_removed`: `{event, room_id}`
     * `sidebar_changed`: the bare atom `:sidebar_changed`
   """
+
+  alias Campfire.Chat.Message
 
   @pubsub Campfire.PubSub
 
@@ -42,6 +45,11 @@ defmodule Campfire.PubSubBroadcaster do
     {Map.fetch!(@record_events, event), with_message(boost)}
   end
 
+  defp message(event, %{data: %Message{} = message})
+       when event in ["message_created", "message_updated"] do
+    {Map.fetch!(@record_events, event), Message.with_digest(message)}
+  end
+
   defp message(event, %{data: record}) when is_map_key(@record_events, event),
     do: {Map.fetch!(@record_events, event), record}
 
@@ -52,9 +60,8 @@ defmodule Campfire.PubSubBroadcaster do
   # because a boost handed to `:destroy` may carry the message it was created with. A deleted
   # boost's message has no boost left in it. When the message is gone too, the broadcast carries `nil`.
   defp with_message(boost) do
-    Ash.load!(boost, [message: Campfire.Chat.Message.loads()],
-      authorize?: false,
-      reuse_values?: false
-    )
+    boost
+    |> Ash.load!([message: Message.loads()], authorize?: false, reuse_values?: false)
+    |> Map.update!(:message, &(&1 && Message.with_digest(&1)))
   end
 end

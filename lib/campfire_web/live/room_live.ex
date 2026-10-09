@@ -122,23 +122,37 @@ defmodule CampfireWeb.RoomLive do
   end
 
   # The window is the ascending ids of the messages in the stream (at most @max_messages, so it's
-  # cheap to keep). Streams don't keep items on the server, so this is how we know which messages
-  # are in the DOM. The paging cursors always point at its two ends: `load_older` pages before
-  # `oldest_id` and `load_newer` after `newest_id`, which also brings back whatever was trimmed.
-  defp put_window(socket, ids) do
-    assign(socket, loaded_ids: ids, oldest_id: List.first(ids), newest_id: List.last(ids))
+  # cheap to keep), a `:queue` with the oldest at the front: every viewer of a room appends each new
+  # message to it, which must not copy the whole window. Streams don't keep items on the server, so
+  # this is how we know which messages are in the DOM. The paging cursors always point at its two
+  # ends: `load_older` pages before `oldest_id` and `load_newer` after `newest_id`, which also
+  # brings back whatever was trimmed.
+  defp put_window(socket, ids) when is_list(ids), do: put_window(socket, :queue.from_list(ids))
+
+  defp put_window(socket, queue) do
+    assign(socket, loaded_ids: queue, oldest_id: first_id(queue), newest_id: last_id(queue))
   end
+
+  defp first_id(queue), do: queue |> :queue.peek() |> peeked_id()
+  defp last_id(queue), do: queue |> :queue.peek_r() |> peeked_id()
+  defp peeked_id({:value, id}), do: id
+  defp peeked_id(:empty), do: nil
 
   # Adds messages (ascending, newer than the whole window) at the bottom, trimming the oldest ones
   # off the top. Anything trimmed makes `more_older?` true.
   defp append_messages(socket, []), do: socket
 
   defp append_messages(socket, messages) do
-    ids = socket.assigns.loaded_ids ++ Enum.map(messages, & &1.id)
-    trimmed? = length(ids) > @max_messages
+    window = Enum.reduce(messages, socket.assigns.loaded_ids, &:queue.in(&1.id, &2))
+    excess = :queue.len(window) - @max_messages
+    trimmed? = excess > 0
+
+    {_trimmed, window} =
+      if trimmed?, do: :queue.split(excess, window), else: {:queue.new(), window}
 
     socket
-    |> put_window(Enum.take(ids, -@max_messages))
+    # the cursors: the front of the window, and the message added last
+    |> assign(loaded_ids: window, oldest_id: first_id(window), newest_id: List.last(messages).id)
     |> update(:more_older?, &(&1 or trimmed?))
     |> stream(:messages, Enum.map(messages, &decorate(socket, &1)), limit: -@max_messages)
   end
@@ -148,11 +162,18 @@ defmodule CampfireWeb.RoomLive do
   defp prepend_messages(socket, []), do: socket
 
   defp prepend_messages(socket, messages) do
-    ids = Enum.map(messages, & &1.id) ++ socket.assigns.loaded_ids
-    trimmed? = length(ids) > @max_messages
+    window =
+      messages
+      |> Enum.reverse()
+      |> Enum.reduce(socket.assigns.loaded_ids, &:queue.in_r(&1.id, &2))
+
+    trimmed? = :queue.len(window) > @max_messages
+
+    {window, _trimmed} =
+      if trimmed?, do: :queue.split(@max_messages, window), else: {window, :queue.new()}
 
     socket
-    |> put_window(Enum.take(ids, @max_messages))
+    |> put_window(window)
     |> update(:more_newer?, &(&1 or trimmed?))
     # Each item is inserted at index 0 in turn, so insert newest first to end up ascending
     |> stream(:messages, messages |> Enum.map(&decorate(socket, &1)) |> Enum.reverse(),
@@ -164,14 +185,18 @@ defmodule CampfireWeb.RoomLive do
   # Takes a deleted message out of the window: the stream limit counts DOM items, so the ids must
   # not outlive them
   defp drop_message(socket, message) do
-    ids = socket.assigns.loaded_ids
+    window = socket.assigns.loaded_ids
 
     socket =
-      cond do
-        message.id not in ids -> socket
+      if :queue.member(message.id, window) do
+        rest = :queue.delete(message.id, window)
+
         # Keep the cursors if nothing is left, an empty window can't be paged from
-        ids == [message.id] -> assign(socket, loaded_ids: [])
-        true -> put_window(socket, List.delete(ids, message.id))
+        if :queue.is_empty(rest),
+          do: assign(socket, loaded_ids: rest),
+          else: put_window(socket, rest)
+      else
+        socket
       end
 
     stream_delete(socket, :messages, message)
@@ -182,7 +207,7 @@ defmodule CampfireWeb.RoomLive do
   end
 
   # Whether a message is in the stream (the trimmed window, not everything ever loaded)
-  defp loaded?(socket, message), do: message.id in socket.assigns.loaded_ids
+  defp loaded?(socket, message), do: :queue.member(message.id, socket.assigns.loaded_ids)
 
   ## Presence
 
@@ -674,14 +699,14 @@ defmodule CampfireWeb.RoomLive do
                 @account,
                 @more_older?,
                 @more_newer?,
-                @loaded_ids
+                :queue.len(@loaded_ids)
               )
             }
             account={@account}
             invite_url={@invite_url}
           />
           <div id={"room_#{@room.id}_message_stream"} phx-update="stream" style="display: contents">
-            <MessageComponents.message
+            <MessageComponents.cached_message
               :for={{dom_id, message} <- @streams.messages}
               id={dom_id}
               message={message}
